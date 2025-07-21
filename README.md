@@ -8,7 +8,7 @@
 >
 > * **2 commandes** pour lancer l’ensemble (Docker Compose)
 > * **Streaming temps‑réel** des tokens
-> * **Stateless** grâce à Redis : scale horizontal immédiat
+> * **Stateless**  : scale horizontal immédiat
 > * API **OpenAI‑compatible** : swap‐in / swap‐out d’un vrai compte OpenAI sans changer une ligne de code
 
 ---
@@ -22,7 +22,6 @@
 * [5. Utilisation de l’API](#5-utilisation-de-lapi)
 * [6. Déploiement en production](#6-déploiement-en-production)
 * [7. FAQ & Dépannage](#7-faq--dépannage)
-* [8. Annexes](#8-annexes)
 
 ---
 
@@ -42,7 +41,7 @@ ThinkingThoughts propose un **starter‑kit micro‑services** destiné aux data
 | **Backend**     | FastAPI 100 % asynchrone (`httpx.AsyncClient`), CORS, OpenTelemetry hooks |
 | **LLM Service** | vLLM 0.4 avec support du streaming & batching                             |
 | **Frontend**    | Streamlit (UI chat, selection de modèle, temperature slider, historique)  |
-| **Persistance** | Sessions stockées dans Redis pour garantir la tolérance aux pannes        |
+| **Persistance** | Sessions stockées dans PG pour garantir la tolérance aux pannes        |
 | **CI / CD**     | Exemple de pipeline GitHub Actions (lint → test → build image)            |
 
 </details>
@@ -81,7 +80,7 @@ $ open http://localhost:8501
 └────────────┘                └────────────┘               └──────────────┘
         ▲                            │                          ▲
         │                            ▼                          │
-        └────────── Redis (chat history) ◀──────────────────────┘
+        └────────── SQL (chat history) ◀──────────────────────┘
 ```
 
 * **Streamlit** : chat en temps‑réel (streaming), gestion de l’API Key, choix du modèle.
@@ -98,7 +97,6 @@ Toutes les variables sont centralisées dans `.env` et chargées via **pydantic�
 | ------------------------- | -------------------------- | -------------------------------------- |
 | `VLLM_API_BASE_URL`       | URL du service vLLM        | `http://vllm:8000`                     |
 | `VLLM_MODEL_NAME`         | Modèle à charger           | `mistralai/Mixtral-8x7B-Instruct-v0.1` |
-| `REDIS_URL`               | DSN Redis                  | `redis://redis:6379/0`                 |
 | `STREAMLIT_AUTH_REQUIRED` | Bloquer la UI sans API Key | `true`                                 |
 | `MAX_TOKENS`              | Limite par réponse         | `512`                                  |
 
@@ -151,16 +149,7 @@ Réponse :
 }
 ```
 
-### Streaming SSE
 
-Définissez `stream=true` et itérez côté client :
-
-```python
-import sseclient, requests
-resp = requests.post(url, json=payload, stream=True, headers=headers)
-for token in sseclient.SSEClient(resp):
-    print(token.data, end="", flush=True)
-```
 
 ### Autres endpoints
 
@@ -203,14 +192,6 @@ Assurez‑vous que votre reverse‑proxy (Traefik, Nginx) laisse passer les conn
 
 </details>
 
----
 
-## 8. Annexes
-
-* **Tests unitaires** : `pytest -q` (couverture > 85 %).
-* **Linting** : `ruff check . && black --check .`.
-* **Scripts utilitaires** : export conversation → Markdown, purge Redis, etc.
-
----
 
 <sub>MIT © 2025 michail alberjaoui — « Maintenir l’équilibre entre l’ordre et le chaos » 🧘‍♂️</sub>
