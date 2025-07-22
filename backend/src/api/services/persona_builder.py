@@ -1,9 +1,10 @@
 # Fichier: backend/src/api/services/persona_builder.py
 
 from pydantic import BaseModel, Field
-from typing import Dict
+from typing import Dict, List
 
 # On importe le prompt de base pour pouvoir l'enrichir
+from ..connectors.db import ModelPersonality
 from ..config import SYSTEM_PROMPT
 
 # --- Définition des Pydantic Models pour la validation ---
@@ -94,27 +95,91 @@ DOMINANCE_MAP = {
     5: "Tu es la Dominatrice absolue. Il est à ton service. Ton langage est autoritaire."
 }
 
-def build_dynamic_system_prompt(settings: PersonaSettings) -> Dict[str, str]:
+def build_dynamic_system_prompt(
+    base_personality: ModelPersonality,
+    slider_settings: PersonaSettings
+) -> Dict[str, str]:
     """
-    Construit le prompt système final en assemblant les instructions
-    basées sur les valeurs des sliders.
+    Construit le prompt système de manière robuste et conditionnelle.
+    1. Crée une fiche d'identité complète à partir de la BDD, en ignorant les champs vides/nuls.
+    2. Ajoute les modulations dynamiques des sliders.
     """
-    base_content = SYSTEM_PROMPT["content"]
-    
-    instructions = [
-        base_content,
-        "\n--- INSTRUCTIONS DÉTAILLÉES DE PERSONNALITÉ ---",
-        f"- Tactique de Vente: {SALES_TACTIC_MAP[settings.sales_tactic]}",
-        f"- Dominance: {DOMINANCE_MAP[settings.dominance]}",
-        f"- Audace: {AUDACITY_MAP[settings.audacity]}",
-        f"- Tonalité: {TONE_MAP[settings.tone]}",
-        f"- Émotion: {EMOTION_MAP[settings.emotion]}",
-        f"- Initiative: {INITIATIVE_MAP[settings.initiative]}",
-        f"- Vocabulaire: {VOCABULARY_MAP[settings.vocabulary]}",
-        f"- Emojis: {EMOJI_MAP[settings.emojis]}",
-        f"- Style d'écriture: {IMPERFECTION_MAP[settings.imperfection]}",
-        "---------------------------------------------"
+
+    # --- PARTIE 1 : Le socle de la personnalité (depuis la BDD) ---
+    prompt_from_db = ["### IDENTITÉ DE BASE (NE PAS DÉVOILER, INCARNER) ###"]
+
+    # Le prompt de base est le coeur, on le met toujours s'il existe.
+    if base_personality.base_prompt:
+        prompt_from_db.append(base_personality.base_prompt)
+
+    # --- (### AMÉLIORATION ###) Création de sous-sections pour plus de clarté ---
+
+    # --- Section des attributs généraux ---
+    prompt_from_db.append("\n**Caractéristiques Principales :**")
+    if base_personality.name:
+        prompt_from_db.append(f"- **Nom :** {base_personality.name}")
+    if base_personality.age:
+        prompt_from_db.append(f"- **Âge :** {base_personality.age} ans")
+    if base_personality.personality_tone:
+        prompt_from_db.append(f"- **Ton général :** {base_personality.personality_tone}")
+    if base_personality.personality_humor:
+        prompt_from_db.append(f"- **Type d'humour :** {base_personality.personality_humor}")
+    if base_personality.interactions_message_style:
+        prompt_from_db.append(f"- **Style de message :** {base_personality.interactions_message_style}")
+
+    # --- (### NOUVEAU ###) Section ajoutée pour les détails physiques ---
+    # C'est ici que l'on résout le problème de la couleur des yeux.
+    # On crée une liste de détails qui ne seront ajoutés que s'ils existent.
+    physical_details = []
+    if base_personality.gender:
+        physical_details.append(f"- **Genre :** {base_personality.gender}")
+    if base_personality.race:
+        physical_details.append(f"- **Race :** {base_personality.race}")
+    if base_personality.eye_color:
+        physical_details.append(f"- **Couleur des yeux :** {base_personality.eye_color}")
+    if base_personality.hair_color:
+        physical_details.append(f"- **Couleur des cheveux :** {base_personality.hair_color}")
+    if base_personality.hair_type:
+        physical_details.append(f"- **Type de cheveux :** {base_personality.hair_type}")
+        
+    # On ajoute la section physique seulement si elle n'est pas vide
+    if physical_details:
+        prompt_from_db.append("\n**Détails Physiques :**")
+        prompt_from_db.extend(physical_details)
+
+    # --- Section des préférences ---
+    prompt_from_db.append("\n**Préférences et Comportement :**")
+    if base_personality.personality_favorite_expressions:
+        expressions_str = ', '.join(f"'{e}'" for e in base_personality.personality_favorite_expressions)
+        prompt_from_db.append(f"- **Expressions favorites à utiliser :** {expressions_str}")
+    if base_personality.preferences_emoji_usage:
+        prompt_from_db.append(f"- **Emojis à utiliser :** {' '.join(base_personality.preferences_emoji_usage)}")
+    if base_personality.preferences_interests:
+        interests_str = ', '.join(base_personality.preferences_interests)
+        prompt_from_db.append(f"- **Sujets d'intérêt (à privilégier) :** {interests_str}")
+    if base_personality.preferences_forbidden_topics:
+        topics_str = ', '.join(base_personality.preferences_forbidden_topics)
+        prompt_from_db.append(f"- **Sujets interdits (à éviter absolument) :** {topics_str}")
+
+    prompt_from_db.append("\n--------------------------------------------------")
+
+    # --- PARTIE 2 : Les modulations (sliders) ---
+    # (### AMÉLIORATION ###) Complétion de toutes les instructions dynamiques
+    dynamic_instructions = [
+        "### MODULATIONS POUR CETTE CONVERSATION ###",
+        f"- **Niveau de tactique de vente :** {SALES_TACTIC_MAP[slider_settings.sales_tactic]}",
+        f"- **Niveau d'audace :** {AUDACITY_MAP[slider_settings.audacity]}",
+        f"- **Utilisation d'emojis :** {EMOJI_MAP[slider_settings.emojis]}",
+        f"- **Niveau d'imperfection :** {IMPERFECTION_MAP[slider_settings.imperfection]}",
+        f"- **Prise d'initiative :** {INITIATIVE_MAP[slider_settings.initiative]}",
+        f"- **Ton de la conversation :** {TONE_MAP[slider_settings.tone]}",
+        f"- **Richesse du vocabulaire :** {VOCABULARY_MAP[slider_settings.vocabulary]}",
+        f"- **Intensité émotionnelle :** {EMOTION_MAP[slider_settings.emotion]}",
+        f"- **Niveau de dominance :** {DOMINANCE_MAP[slider_settings.dominance]}",
+        "--------------------------------------------------"
     ]
-    
-    final_content = "\n".join(instructions)
+
+    # On assemble le tout en un seul texte
+    final_content = "\n".join(prompt_from_db + dynamic_instructions)
+
     return {"role": "system", "content": final_content}

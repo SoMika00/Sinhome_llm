@@ -3,6 +3,10 @@ uvicorn[standard]
 requests
 pydantic-settings
 httpx
+asyncpg
+psycopg2-binary
 
 # Pour les tests
 pytest
+
+

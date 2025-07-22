@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     # Le nom du modèle que le service VLLM doit utiliser.
     # Cette variable DOIT être définie dans votre fichier .env
     VLLM_MODEL_NAME: str
-
+    DATABASE_URL: str
 # Création d'une instance unique des paramètres qui sera importée par les autres modules.
 settings = Settings()
 

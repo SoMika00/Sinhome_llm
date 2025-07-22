@@ -4,6 +4,8 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from typing import List, Dict
 import httpx
+from uuid import UUID
+from ..connectors import db
 
 # On importe maintenant le constructeur de persona et le modèle de settings
 from ..services import vllm_client
@@ -38,19 +40,33 @@ class ChatResponse(BaseModel):
 )
 async def handle_configured_chat(request: ConfiguredChatRequest):
     """
-    Endpoint de chat avancé qui utilise les réglages de personnalité
-    fournis pour générer un prompt système sur-mesure.
+    Endpoint de chat avancé qui utilise une personnalité spécifique (hardcodée)
+    depuis la BDD et la module avec les réglages des sliders.
     """
+    
+    # ===> C'EST LA LIGNE CLÉ QUE NOUS AJOUTONS <===
+    # On définit ici l'ID du modèle "Anna" que l'on veut utiliser.
+    TARGET_MODEL_ID = UUID('f0d654d4-96ca-4c50-af9d-5fa7009c9b67')
+    
     try:
-        # 1. Construire le prompt système dynamique grâce à notre nouveau module
-        dynamic_system_prompt = build_dynamic_system_prompt(request.persona)
+        # 1. Récupérer la personnalité de base depuis la BDD en utilisant notre ID cible
+        base_personality = await db.get_model_by_id(TARGET_MODEL_ID)
+        
+        if not base_personality:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Le modèle avec l'ID {TARGET_MODEL_ID} n'a pas été trouvé dans la base de données."
+            )
 
-        # 2. Préparer les messages pour le LLM
+        # 2. Construire le prompt système dynamique (cette partie ne change pas)
+        dynamic_system_prompt = build_dynamic_system_prompt(base_personality, request.persona)
+
+        # 3. Préparer les messages pour le LLM (cette partie ne change pas)
         messages_for_llm = [
             dynamic_system_prompt
         ] + request.history + [{"role": "user", "content": request.message}]
 
-        # 3. Appeler le service vLLM (pas de changement ici)
+        # 4. Appeler le service vLLM (cette partie ne change pas)
         response_text = await vllm_client.get_vllm_response(messages_for_llm)
         
         return ChatResponse(response=response_text)
