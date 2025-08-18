@@ -1,5 +1,4 @@
-# Fichier : docker-compose.yml (mis à jour pour la flexibilité)
-version: '3.8'
+version: "3.8"
 
 services:
   qdrant:
@@ -19,16 +18,7 @@ services:
     volumes:
       - /scratch/hf_cache:/root/.cache/huggingface/hub
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - VLLM_MODEL_ID=${VLLM_MODEL_ID}
-      - VLLM_CLI_ARGS=${VLLM_CLI_ARGS}
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 2
-              capabilities: [gpu]
+      NVIDIA_VISIBLE_DEVICES: "all"
     command: >
       --host 0.0.0.0
       --model ${VLLM_MODEL_ID}
@@ -47,15 +37,11 @@ services:
       - "8001:8001"
     volumes:
       - ./backend/src:/app/src
-    # On passe directement les variables d'environnement
-    # au lieu de dupliquer un fichier .env
     environment:
-      - VLLM_API_BASE_URL=http://vllm:8000/v1
-      # IMPORTANT : Le backend utilise la même variable que vLLM
-      - VLLM_MODEL_NAME=${VLLM_MODEL_ID}
-      - QDRANT_URL=http://qdrant:6333
-      # Récupérez votre DATABASE_URL depuis votre ancien .env
-      - DATABASE_URL=${DATABASE_URL}
+      VLLM_API_BASE_URL: "http://vllm:8000/v1"
+      VLLM_MODEL_NAME: "${VLLM_MODEL_ID}"   # le même ID que vLLM
+      QDRANT_URL: "http://qdrant:6333"
+      DATABASE_URL: "${DATABASE_URL}"       # injecté depuis .env
     restart: on-failure
 
   frontend:
@@ -66,5 +52,5 @@ services:
     ports:
       - "8501:8501"
     environment:
-      - STREAMLIT_BACKEND_API_URL=http://backend:8001/api/v1/chat/
+      STREAMLIT_BACKEND_API_URL: "http://backend:8001/api/v1/chat/"
     restart: on-failure
