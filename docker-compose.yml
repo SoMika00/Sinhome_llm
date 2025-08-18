@@ -1,5 +1,4 @@
-# Fichier : docker-compose.yml (mis à jour)
-
+# Fichier : docker-compose.yml (mis à jour pour la flexibilité)
 version: '3.8'
 
 services:
@@ -21,22 +20,19 @@ services:
       - /scratch/hf_cache:/root/.cache/huggingface/hub
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
+      - VLLM_MODEL_ID=${VLLM_MODEL_ID}
+      - VLLM_CLI_ARGS=${VLLM_CLI_ARGS}
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              count: 2
               capabilities: [gpu]
-    command:
-      - --host
-      - 0.0.0.0
-      - --model
-      - huihui-ai/qwen2.5-32B-Instruct-abliterated
-      - --max-model-len
-      - '4096'
-      - --gpu-memory-utilization
-      - '0.90'
+    command: >
+      --host 0.0.0.0
+      --model ${VLLM_MODEL_ID}
+      ${VLLM_CLI_ARGS}
     ports:
       - "8000:8000"
     restart: on-failure
@@ -46,17 +42,20 @@ services:
       context: ./backend
     depends_on:
       - vllm
-      - qdrant # On ajoute la dépendance
+      - qdrant
     ports:
       - "8001:8001"
     volumes:
       - ./backend/src:/app/src
-    env_file:
-      - ./backend/.env # On va utiliser un fichier .env pour les secrets
+    # On passe directement les variables d'environnement
+    # au lieu de dupliquer un fichier .env
     environment:
       - VLLM_API_BASE_URL=http://vllm:8000/v1
-      - VLLM_MODEL_NAME=huihui-ai/qwen2.5-32B-Instruct-abliterated
-      - QDRANT_URL=http://qdrant:6333 # Prêt pour le futur
+      # IMPORTANT : Le backend utilise la même variable que vLLM
+      - VLLM_MODEL_NAME=${VLLM_MODEL_ID}
+      - QDRANT_URL=http://qdrant:6333
+      # Récupérez votre DATABASE_URL depuis votre ancien .env
+      - DATABASE_URL=${DATABASE_URL}
     restart: on-failure
 
   frontend:
