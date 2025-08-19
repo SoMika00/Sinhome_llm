@@ -22,11 +22,6 @@ echo "▶️  Lancement avec le modèle : ${MODEL_NAME}"
 # 1) Fabrique un .env propre pour docker compose (dans le même dossier que docker-compose.yml)
 cp "$ENV_FILE" .env
 
-# 2) Ajoute DATABASE_URL si absente (avec saut de ligne avant)
-if ! grep -qE '^DATABASE_URL=' .env; then
-  printf "\n" >> .env
-  echo "DATABASE_URL=postgresql+asyncpg://user:password@host:port/dbname" >> .env
-fi
 
 echo "ℹ️  .env généré :"
 cat .env

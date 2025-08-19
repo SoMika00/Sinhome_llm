@@ -1,23 +1,17 @@
-# Fichier: config.py
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# --- Configuration dynamique (chargée depuis les variables d'environnement / .env) ---
-# Cette classe gère les paramètres qui peuvent varier entre le développement et la production.
 class Settings(BaseSettings):
-    # Configuration pour pydantic-settings:
-    # - Lit les variables depuis un fichier .env
-    # - Ignore les variables d'environnement supplémentaires
+    """
+    Gère les paramètres chargés depuis les variables d'environnement.
+    La connexion à la base de données a été supprimée car le service est stateless.
+    """
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
-    # URL de base pour contacter l'API VLLM.
-    # Dans Docker, 'vllm' est le nom du service, donc l'URL doit être http://vllm:8000/v1
+    # URL de base pour contacter l'API VLLM (obligatoire).
     VLLM_API_BASE_URL: str = "http://vllm:8000/v1"
 
-    # Le nom du modèle que le service VLLM doit utiliser.
-    # Cette variable DOIT être définie dans votre fichier .env
+    # Le nom du modèle que le service VLLM doit utiliser (obligatoire).
     VLLM_MODEL_NAME: str
-    DATABASE_URL: str
-# Création d'une instance unique des paramètres qui sera importée par les autres modules.
-settings = Settings()
 
+# Instance unique des paramètres pour toute l'application.
+settings = Settings()

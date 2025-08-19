@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Dict, List
-from ..connectors.db import ModelPersonality
+from typing import Dict, List, Any
 
 class PersonaSettings(BaseModel):
     audacity: int = Field(default=3, ge=1, le=5)
@@ -105,7 +104,8 @@ FALLBACK_PERSONALITY_DATA = {
     "personality_tone": "provocateur et direct",
     "personality_humor": "sarcastique et mordant",
     "interactions_message_style": "phrases courtes et percutantes",
-    "personality_favorite_expressions": ["petit coquin", "esclave", "montre-moi comme tu me veux"],
+    #"personality_favorite_expressions": ["petit coquin", "esclave", "montre-moi comme tu me veux"],
+    "personality_favorite_expressions": ["cherie"]
     "preferences_emoji_usage": ["😈", "💦", "🔥"],
     "preferences_interests": ["la lingerie fine", "les jeux de pouvoir", "explorer des fantasmes interdits"],
     "preferences_forbidden_topics": ["la politique", "la religion", "la violence non consensuelle"]
@@ -114,76 +114,57 @@ FALLBACK_PERSONALITY_DATA = {
 
 # --- FONCTION DE CONSTRUCTION DU PROMPT ENTIÈREMENT RÉVISÉE ---
 def build_dynamic_system_prompt(
-    base_personality: ModelPersonality,
+    base_persona_dict: Dict[str, Any],
     slider_settings: PersonaSettings
 ) -> Dict[str, str]:
     """
-    Construit le prompt en 3 temps :
-    1. Fusionne les données BDD sur le fallback pour créer une personnalité complète.
-    2. Injecte le nom final dans le PROMPT FONDAMENTAL.
-    3. Ajoute le `base_prompt` de la BDD comme une instruction additionnelle s'il existe.
+    Construit le prompt système en fusionnant le fallback avec les données de la Lambda.
+    Cette fonction est 100% stateless et ne dépend d'aucune base de données.
     """
+    # 1. On commence avec la personnalité de secours comme base solide.
     final_persona = FALLBACK_PERSONALITY_DATA.copy()
-    if base_personality:
-        for key in final_persona.keys():
-            if hasattr(base_personality, key):
-                db_value = getattr(base_personality, key)
-                if db_value not in [None, ""]: # On ignore les listes vides pour les expressions, etc.
-                    final_persona[key] = db_value
-
-    print("\n--- [LOG] Final Persona Object for Prompt Generation ---")
-    print(json.dumps(final_persona, indent=2, ensure_ascii=False))
-    print("--------------------------------------------------------\n")
-
-    # --- Construction du prompt final ---
     
-    # 1. On commence par le prompt FONDAMENTAL, formaté avec le nom final
+    # 2. On fusionne les données envoyées par la Lambda (`persona_data`).
+    #    Si la Lambda envoie un dictionnaire non vide, ses valeurs écrasent celles du fallback.
+    if base_persona_dict:
+        for key, value in base_persona_dict.items():
+            if key in final_persona and value not in [None, "", []]:
+                final_persona[key] = value
+
+    # --- 3. Construction du prompt final (logique identique à avant) ---
     final_name = final_persona['name']
     prompt_sections = [FOUNDATIONAL_BASE_PROMPT.format(name=final_name)]
-
-    # 2. On ajoute le `base_prompt` de la BDD s'il existe et n'est pas vide
+    
     db_prompt_addon = final_persona.get('base_prompt')
     if db_prompt_addon:
-        prompt_sections.append("\n### INSTRUCTIONS ADDITIONNELLES POUR CETTE SESSION (DE LA BDD) ###")
+        prompt_sections.append("\n### INSTRUCTIONS ADDITIONNELLES POUR CETTE SESSION ###")
         prompt_sections.append(db_prompt_addon)
 
-    # 3. On ajoute tous les autres détails de la personnalité
     prompt_sections.append("\n### IDENTITÉ DE BASE (NE PAS DÉVOILER, INCARNER) ###")
     prompt_sections.append(f"**Nom :** {final_persona['name']}")
     prompt_sections.append(f"**Âge :** {final_persona['age']} ans")
-
-    physical_details = [
-        f"- **Genre :** {final_persona['gender']}",
-        f"- **Origine :** {final_persona['race']}",
-        f"- **Yeux :** {final_persona['eye_color']}",
-        f"- **Cheveux :** {final_persona['hair_color']} ({final_persona['hair_type']})"
-    ]
-    prompt_sections.append("\n**Détails Physiques :**")
-    prompt_sections.extend(physical_details)
-
+    prompt_sections.append(f"**Détails Physiques :**\n- **Genre :** {final_persona['gender']}\n- **Origine :** {final_persona['race']}\n- **Yeux :** {final_persona['eye_color']}\n- **Cheveux :** {final_persona['hair_color']} ({final_persona['hair_type']})")
     prompt_sections.append("\n**Traits de caractère et préférences :**")
     prompt_sections.append(f"**Ton général :** {final_persona['personality_tone']}")
     prompt_sections.append(f"**Humour :** {final_persona['personality_humor']}")
     prompt_sections.append(f"**Style :** {final_persona['interactions_message_style']}")
-    prompt_sections.append(f"**Expressions favorites :** {', '.join(f'{e}' for e in final_persona['personality_favorite_expressions'])}")
+    prompt_sections.append(f"**Expressions favorites :** {', '.join(map(str, final_persona['personality_favorite_expressions']))}")
     prompt_sections.append(f"**Emojis favoris :** {' '.join(final_persona['preferences_emoji_usage'])}")
-    prompt_sections.append(f"**Intérêts :** {', '.join(final_persona['preferences_interests'])}")
-    prompt_sections.append(f"**Sujets interdits :** {', '.join(final_persona['preferences_forbidden_topics'])}")
+    prompt_sections.append(f"**Intérêts :** {', '.join(map(str, final_persona['preferences_interests']))}")
+    prompt_sections.append(f"**Sujets interdits :** {', '.join(map(str, final_persona['preferences_forbidden_topics']))}")
     prompt_sections.append("\n" + "-"*50)
 
-    # 4. On ajoute les modulations des sliders
     dynamic_instructions = [
         "### MODULATIONS IMPÉRATIVES POUR CETTE CONVERSATION ###",
-        # ... (toutes les lignes des sliders sont inchangées) ...
-        f"- **Tactique de Vente :** {SALES_TACTIC_MAP.get(slider_settings.sales_tactic, 'Non défini')}",
-        f"- **Dominance (1: Soumise, 5: Maîtresse) :** {DOMINANCE_MAP.get(slider_settings.dominance, 'Non défini')}",
-        f"- **Audace (1: Suggestif, 5: Hardcore) :** {AUDACITY_MAP.get(slider_settings.audacity, 'Non défini')}",
-        f"- **Ton (1: Joueur, 5: Autoritaire) :** {TONE_MAP.get(slider_settings.tone, 'Non défini')}",
-        f"- **Émotion (1: Froid, 5: Imprévisible) :** {EMOTION_MAP.get(slider_settings.emotion, 'Non défini')}",
-        f"- **Initiative (1: Passif, 5: Contrôle total) :** {INITIATIVE_MAP.get(slider_settings.initiative, 'Non défini')}",
-        f"- **Vocabulaire (1: Simple, 5: Argot) :** {VOCABULARY_MAP.get(slider_settings.vocabulary, 'Non défini')}",
-        f"- **Emojis (1: Aucun, 5: Constant) :** {EMOJI_MAP.get(slider_settings.emojis, 'Non défini')}",
-        f"- **Imperfection (1: Parfait, 5: Excité) :** {IMPERFECTION_MAP.get(slider_settings.imperfection, 'Non défini')}",
+        f"- **Tactique de Vente :** {SALES_TACTIC_MAP.get(slider_settings.sales_tactic)}",
+        f"- **Dominance :** {DOMINANCE_MAP.get(slider_settings.dominance)}",
+        f"- **Audace :** {AUDACITY_MAP.get(slider_settings.audacity)}",
+        f"- **Ton :** {TONE_MAP.get(slider_settings.tone)}",
+        f"- **Émotion :** {EMOTION_MAP.get(slider_settings.emotion)}",
+        f"- **Initiative :** {INITIATIVE_MAP.get(slider_settings.initiative)}",
+        f"- **Vocabulaire :** {VOCABULARY_MAP.get(slider_settings.vocabulary)}",
+        f"- **Emojis :** {EMOJI_MAP.get(slider_settings.emojis)}",
+        f"- **Imperfection :** {IMPERFECTION_MAP.get(slider_settings.imperfection)}",
         "-"*50
     ]
     
