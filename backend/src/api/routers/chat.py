@@ -1,36 +1,65 @@
-# backend/src/api/routers/chat.py  (REMPLACER COMPLÈTEMENT)
+# backend/src/api/routers/chat.py
 
 import logging
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Dict, Any, Optional
 import httpx
 
 from ..services import vllm_client
-from ..services.persona_builder import PersonaSettings, build_dynamic_system_prompt
+from ..services.persona_builder2 import (
+    PersonaSettings, 
+    build_dynamic_system_prompt,
+    build_script_system_prompt,
+    DEFAULT_PERSONA
+)
 
-router = APIRouter()
-ext_router = APIRouter()  # compat Lambda
+ext_router = APIRouter()
 
-# --- Logging ---
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
 
 # --- Schemas ---
-class ConfiguredChatRequest(BaseModel):
-    message: str = Field(...)
-    history: List[Dict[str, Any]] = Field(default_factory=list)
-    persona: PersonaSettings = Field(...)
-
 class ChatResponse(BaseModel):
     response: str
 
-class LambdaChatRequest(BaseModel):
+class DirectChatRequest(BaseModel):
+    """Payload pour /direct_chat - test simple sans config"""
+    message: str
+
+class PersonalityChatRequest(BaseModel):
+    """Payload pour /personality_chat - requiert persona_data avec sliders"""
     session_id: Optional[str] = None
     message: str
     history: List[Dict[str, Any]] = Field(default_factory=list)
-    persona_data: Dict[str, Any] = Field(default_factory=dict)
+    persona_data: Dict[str, Any]
+    
+    @field_validator('persona_data')
+    @classmethod
+    def validate_persona_data(cls, v):
+        required_sliders = ['dominance', 'audacity', 'sales_tactic', 'tone', 'emotion', 'initiative', 'vocabulary', 'emojis', 'imperfection']
+        missing = [s for s in required_sliders if s not in v]
+        if missing:
+            raise ValueError(f"persona_data manque les sliders: {missing}")
+        return v
+
+class ScriptChatRequest(BaseModel):
+    """Payload pour /script_chat - requiert persona_data + script"""
+    session_id: Optional[str] = None
+    message: str
+    history: List[Dict[str, Any]] = Field(default_factory=list)
+    persona_data: Dict[str, Any]
+    script: str = Field(..., min_length=1, description="Directive du scenario")
+    
+    @field_validator('persona_data')
+    @classmethod
+    def validate_persona_data(cls, v):
+        required_sliders = ['dominance', 'audacity', 'sales_tactic', 'tone', 'emotion', 'initiative', 'vocabulary', 'emojis', 'imperfection']
+        missing = [s for s in required_sliders if s not in v]
+        if missing:
+            raise ValueError(f"persona_data manque les sliders: {missing}")
+        return v
 
 # --- Utils persona ---
 def _as_int(x: Any, default: int) -> int:
@@ -75,7 +104,6 @@ def sanitize_messages(
 ) -> List[Dict[str, Any]]:
     msgs: List[Dict[str, Any]] = []
 
-    # 1) system en tête si fourni
     if system_msg and system_msg.get("role") == "system":
         msgs.append({"role": "system", "content": system_msg.get("content", "")})
 
@@ -102,14 +130,47 @@ def sanitize_messages(
     msgs.extend(collapsed)
     return msgs
 
-# --- ENDPOINT LAMBDA (prod) ---
+# --- ENDPOINT /direct_chat (test simple) ---
+@ext_router.post(
+    "/direct_chat",
+    response_model=ChatResponse,
+    summary="Test direct - persona par defaut, pas d'historique",
+)
+async def direct_chat(request: DirectChatRequest):
+    logger.info("[direct_chat] message: %s", request.message[:100])
+    
+    # Persona et sliders par defaut
+    default_sliders = PersonaSettings()
+    system_prompt = build_dynamic_system_prompt(
+        base_persona_dict=DEFAULT_PERSONA,
+        slider_settings=default_sliders,
+    )
+    
+    messages_for_llm = [
+        system_prompt,
+        {"role": "user", "content": request.message}
+    ]
+    
+    try:
+        response_text = await vllm_client.get_vllm_response(messages_for_llm)
+        logger.info("[direct_chat] response: %s", str(response_text)[:100])
+        return ChatResponse(response=response_text)
+    except httpx.ConnectError as e:
+        logger.error("[direct_chat] LLM connection failed: %s", e)
+        raise HTTPException(status_code=503, detail=f"Service LLM indisponible: {e}")
+    except Exception as e:
+        logger.exception("[direct_chat] internal error")
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {e}")
+
+
+# --- ENDPOINT /personality_chat ---
 @ext_router.post(
     "/personality_chat",
     response_model=ChatResponse,
-    summary="Endpoint principal pour la Lambda, 100% stateless",
+    summary="Chat avec personnalité configurable via sliders",
 )
-async def personality_chat_compat(request: LambdaChatRequest):
-    logger.info("📥 Payload reçu /personality_chat: %s", request.dict())
+async def personality_chat(request: PersonalityChatRequest):
+    logger.info("[personality_chat] message: %s", request.message[:100])
 
     persona_sliders = _persona_from_lambda_dict(request.persona_data)
     dynamic_system_prompt = build_dynamic_system_prompt(
@@ -122,31 +183,37 @@ async def personality_chat_compat(request: LambdaChatRequest):
         history=request.history,
         user_text=request.message,
     )
-    logger.debug("📤 Messages envoyés au LLM (sanitized): %s", messages_for_llm)
+    logger.debug("Messages LLM: %s", messages_for_llm)
 
     try:
         response_text = await vllm_client.get_vllm_response(messages_for_llm)
-        logger.info("✅ Réponse LLM: %s", str(response_text)[:200])
+        logger.info("[personality_chat] response: %s", str(response_text)[:100])
         return ChatResponse(response=response_text)
     except httpx.ConnectError as e:
-        logger.error("❌ Impossible de contacter le service LLM: %s", e)
-        raise HTTPException(status_code=503, detail=f"Impossible de contacter le service LLM: {e}")
+        logger.error("[personality_chat] LLM connection failed: %s", e)
+        raise HTTPException(status_code=503, detail=f"Service LLM indisponible: {e}")
     except Exception as e:
-        logger.exception("❌ Erreur interne lors de l'appel au LLM")
-        raise HTTPException(status_code=500, detail=f"Erreur interne lors de l'appel au LLM: {e}")
+        logger.exception("[personality_chat] internal error")
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {e}")
 
-# --- ENDPOINT TEST (ancien frontend) ---
-@router.post(
-    "/configured",
+
+# --- ENDPOINT /script_chat ---
+@ext_router.post(
+    "/script_chat",
     response_model=ChatResponse,
-    summary="Générer une réponse pour les tests (fallback persona)",
+    summary="Chat avec personnalité + directive de scénario",
 )
-async def handle_configured_chat(request: ConfiguredChatRequest):
-    logger.info("📥 Payload reçu /configured: %s", request.dict())
+async def script_chat(request: ScriptChatRequest):
+    logger.info("[script_chat] message: %s | script: %s", 
+                request.message[:50], request.script[:50])
 
-    dynamic_system_prompt = build_dynamic_system_prompt(
-        base_persona_dict={},
-        slider_settings=request.persona,
+    persona_sliders = _persona_from_lambda_dict(request.persona_data)
+    
+    # Construction du prompt avec le script additionnel
+    dynamic_system_prompt = build_script_system_prompt(
+        base_persona_dict=request.persona_data,
+        slider_settings=persona_sliders,
+        script=request.script,
     )
 
     messages_for_llm = sanitize_messages(
@@ -154,12 +221,15 @@ async def handle_configured_chat(request: ConfiguredChatRequest):
         history=request.history,
         user_text=request.message,
     )
-    logger.debug("📤 Messages envoyés au LLM (sanitized): %s", messages_for_llm)
+    logger.debug("Messages LLM (avec script): %s", messages_for_llm)
 
     try:
         response_text = await vllm_client.get_vllm_response(messages_for_llm)
-        logger.info("✅ Réponse LLM: %s", str(response_text)[:200])
+        logger.info("[script_chat] response: %s", str(response_text)[:100])
         return ChatResponse(response=response_text)
+    except httpx.ConnectError as e:
+        logger.error("[script_chat] LLM connection failed: %s", e)
+        raise HTTPException(status_code=503, detail=f"Service LLM indisponible: {e}")
     except Exception as e:
-        logger.exception("❌ Erreur interne")
+        logger.exception("[script_chat] internal error")
         raise HTTPException(status_code=500, detail=f"Erreur interne: {e}")

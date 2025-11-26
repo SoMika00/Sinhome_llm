@@ -1,0 +1,154 @@
+================================================================================
+                        SINHOME LLM - NOTICE TECHNIQUE
+================================================================================
+
+## ARCHITECTURE GLOBALE
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              CRM EXTERNE                                     │
+│                    (gère users, sessions, scénarios)                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼ HTTP POST
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         BACKEND (FastAPI :8001)                              │
+│  ┌─────────────────────┐    ┌─────────────────────┐                         │
+│  │  /personality_chat  │    │    /script_chat     │                         │
+│  │  (chat standard)    │    │  (chat + directive) │                         │
+│  └─────────────────────┘    └─────────────────────┘                         │
+│                    │                    │                                    │
+│                    ▼                    ▼                                    │
+│           ┌─────────────────────────────────────┐                           │
+│           │        persona_builder.py           │                           │
+│           │   (construit le prompt système)     │                           │
+│           └─────────────────────────────────────┘                           │
+│                              │                                               │
+│                              ▼                                               │
+│           ┌─────────────────────────────────────┐                           │
+│           │         vllm_client.py              │                           │
+│           │    (appel HTTP vers vLLM)           │                           │
+│           └─────────────────────────────────────┘                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼ HTTP POST /v1/chat/completions
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          vLLM SERVER (:8000)                                 │
+│                    (Qwen2.5-32B ou autre modèle)                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+================================================================================
+## ENDPOINTS DISPONIBLES
+================================================================================
+
+### 1. POST /personality_chat
+Chat avec personnalité configurable via sliders (1-5).
+
+Payload:
+{
+    "session_id": "optionnel",
+    "message": "Le message de l'utilisateur",
+    "history": [
+        {"role": "user", "content": "msg précédent"},
+        {"role": "assistant", "content": "réponse précédente"}
+    ],
+    "persona_data": {
+        "name": "Seline",
+        "sales_tactic": 2,      // 1=jamais, 5=agressif
+        "dominance": 3,         // 1=soumise, 5=dominatrice
+        "audacity": 3,          // 1=allusive, 5=très cru
+        "tone": 2,              // 1=joueuse, 5=sérieuse
+        "emotion": 3,           // 1=froide, 5=passionnée
+        "initiative": 3,        // 1=passive, 5=contrôle total
+        "vocabulary": 3,        // 1=simple, 5=très vulgaire
+        "emojis": 3,            // 1=aucun, 5=beaucoup
+        "imperfection": 1       // 1=parfait, 5=fautes volontaires
+    }
+}
+
+Réponse:
+{
+    "response": "La réponse générée par le LLM"
+}
+
+
+### 2. POST /script_chat
+Même chose + une directive de scénario pour guider la réponse.
+
+Payload (en plus):
+{
+    ...
+    "script": "Tu dois maintenant créer de la curiosité sur ton contenu. 
+               Mentionne que tu as des photos spéciales sans être trop directe."
+}
+
+Le script est injecté comme instruction prioritaire dans le prompt système.
+
+
+================================================================================
+## COMMENT ÇA FONCTIONNE
+================================================================================
+
+1. Le CRM envoie une requête avec :
+   - Le message de l'utilisateur
+   - L'historique de conversation
+   - Les paramètres de personnalité (sliders)
+   - (Optionnel) Un script/directive pour /script_chat
+
+2. Le backend construit un PROMPT SYSTÈME dynamique :
+   - Base : instructions de format (messages courts, style messagerie)
+   - Identité : nom, âge, traits de caractère
+   - Modulations : traduction des sliders en instructions textuelles
+   - (Script) : directive prioritaire si /script_chat
+
+3. Le tout est envoyé à vLLM avec l'historique formaté
+
+4. La réponse est renvoyée au CRM
+
+
+================================================================================
+## LANCEMENT
+================================================================================
+
+# Choisir un modèle (fichiers dans models_env/)
+./run.sh qwen2
+
+# Ou directement
+docker compose --env-file models_env/qwen2.env up --build -d
+
+# Vérifier les logs
+docker compose logs -f backend
+docker compose logs -f vllm
+
+# Arrêter
+docker compose down
+
+
+================================================================================
+## FICHIERS CLÉS
+================================================================================
+
+backend/src/api/
+├── main.py                 # Point d'entrée FastAPI
+├── config.py               # Variables d'environnement
+├── routers/
+│   └── chat.py             # Définition des endpoints
+└── services/
+    ├── vllm_client.py      # Client HTTP vers vLLM
+    └── persona_builder.py  # Construction du prompt système
+
+models_env/
+└── *.env                   # Configs modèles (VLLM_MODEL_ID, VLLM_CLI_ARGS)
+
+docker-compose.yml          # Orchestration des services
+
+
+================================================================================
+## NOTES TECHNIQUES
+================================================================================
+
+- Le backend est 100% STATELESS (pas de DB, pas de sessions)
+- L'historique est géré côté CRM et passé à chaque requête
+- Retry automatique si le LLM répond en chinois (bug de certains modèles)
+- Timeout de 120s pour les requêtes vLLM
+

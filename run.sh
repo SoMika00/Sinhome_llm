@@ -17,26 +17,25 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-echo "▶️  Lancement avec le modèle : ${MODEL_NAME}"
+echo "[+] Lancement avec le modele : ${MODEL_NAME}"
 
-# 1) Fabrique un .env propre pour docker compose (dans le même dossier que docker-compose.yml)
+# Copie le fichier env pour docker compose
 cp "$ENV_FILE" .env
 
-
-echo "ℹ️  .env généré :"
+echo "[*] .env genere :"
 cat .env
 
-# 3) Valide la config interpolée (hérite de .env)
-echo "🔎 Validation docker compose (interpolation)..."
+# Valide la config interpolee
+echo "[*] Validation docker compose..."
 docker compose --env-file .env config >/dev/null
 
-# 4) Démarre (on force l'env-file pour lever toute ambiguïté)
-echo "🚀 Démarrage des conteneurs..."
+# Demarre les conteneurs
+echo "[*] Demarrage des conteneurs..."
 docker compose --env-file .env up --build -d --remove-orphans
 
 echo
-echo "✅ Environnement démarré"
-echo "   - Streamlit : http://localhost:8501"
-echo "   - vLLM API  : http://localhost:8000/v1"
-echo "   - Logs vllm : docker compose logs -f vllm"
-echo "   - Stop      : docker compose down"
+echo "[OK] Environnement demarre"
+echo "     - Backend  : http://localhost:8001"
+echo "     - vLLM API : http://localhost:8000/v1"
+echo "     - Logs     : docker compose logs -f"
+echo "     - Stop     : docker compose down"
