@@ -152,3 +152,4 @@ docker-compose.yml          # Orchestration des services
 - Retry automatique si le LLM répond en chinois (bug de certains modèles)
 - Timeout de 120s pour les requêtes vLLM
 
+

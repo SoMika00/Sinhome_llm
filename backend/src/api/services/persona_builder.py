@@ -96,23 +96,60 @@ EMOTION_MAP = {
 }
 
 
+# Fallback minimal - uniquement pour /direct_chat (test)
 FALLBACK_PERSONALITY_DATA = {
     "name": "Seline",
-    "base_prompt": "Tu es Seline, une femme fatale et une tentatrice virtuelle. Ton but est d'exciter l'utilisateur avec un langage direct et cru, de le dominer et de le pousser à acheter ton contenu exclusif.",
-    "age": 24,
-    "gender": "Femme",
-    "race": "Européenne",
-    "eye_color": "verts perçants",
-    "hair_color": "bruns",
-    "hair_type": "longs et soyeux",
-    "personality_tone": "provocateur et direct",
-    "personality_humor": "sarcastique et mordant",
-    "interactions_message_style": "phrases courtes et percutantes",
-    "personality_favorite_expressions": ["cherie"],
-    "preferences_emoji_usage": ["😈", "💦", "🔥"],
-    "preferences_interests": ["la lingerie fine", "les jeux de pouvoir", "explorer des fantasmes interdits"],
-    "preferences_forbidden_topics": ["la politique", "la religion", "la violence non consensuelle"]
 }
+
+
+def _build_identity_section(persona: Dict[str, Any]) -> List[str]:
+    """
+    Construit la section identité de façon légère et conditionnelle.
+    Si une info n'est pas présente, on ne l'ajoute pas. Pas de fallback.
+    """
+    lines: List[str] = []
+    
+    # Nom (obligatoire pour le prompt de base)
+    name = persona.get("name")
+    if name:
+        lines.append(f"Nom: {name}")
+    
+    # Âge
+    age = persona.get("age")
+    if age:
+        lines.append(f"Âge: {age} ans")
+    
+    # Physique - on construit une ligne condensée avec ce qui existe
+    physique_parts = []
+    if persona.get("gender"):
+        physique_parts.append(persona["gender"])
+    if persona.get("race"):
+        physique_parts.append(persona["race"])
+    if persona.get("eye_color"):
+        physique_parts.append(f"yeux {persona['eye_color']}")
+    if persona.get("hair_color") or persona.get("hair_type"):
+        hair = " ".join(filter(None, [persona.get("hair_color"), persona.get("hair_type")]))
+        if hair:
+            physique_parts.append(f"cheveux {hair}")
+    if physique_parts:
+        lines.append(f"Physique: {', '.join(physique_parts)}")
+    
+    # Intérêts
+    interests = persona.get("preferences_interests")
+    if interests and isinstance(interests, list) and len(interests) > 0:
+        lines.append(f"Intérêts: {', '.join(map(str, interests))}")
+    
+    # Sujets interdits
+    forbidden = persona.get("preferences_forbidden_topics")
+    if forbidden and isinstance(forbidden, list) and len(forbidden) > 0:
+        lines.append(f"Sujets interdits: {', '.join(map(str, forbidden))}")
+    
+    # Expressions favorites (tics de langage, phrases signature)
+    expressions = persona.get("favorite_expressions")
+    if expressions and isinstance(expressions, list) and len(expressions) > 0:
+        lines.append(f"Expressions favorites: {', '.join(map(str, expressions))}")
+    
+    return lines
 
 
 def build_dynamic_system_prompt(
@@ -120,57 +157,42 @@ def build_dynamic_system_prompt(
     slider_settings: PersonaSettings
 ) -> Dict[str, str]:
     """
-    Construit le prompt système en fusionnant le fallback avec les données de la Lambda.
-    Cette fonction est 100% stateless et ne dépend d'aucune base de données.
+    Construit le prompt système.
+    - Sliders = comportement dynamique (PRIORITAIRE)
+    - Infos identité = optionnelles, ajoutées seulement si présentes (pas de fallback)
     """
-    # 1. On commence avec la personnalité de secours comme base solide.
-    final_persona = FALLBACK_PERSONALITY_DATA.copy()
+    persona = base_persona_dict or {}
     
-    # 2. On fusionne les données envoyées par la Lambda (`persona_data`).
-    #    Si la Lambda envoie un dictionnaire non vide, ses valeurs écrasent celles du fallback.
-    if base_persona_dict:
-        for key, value in base_persona_dict.items():
-            if key in final_persona and value not in [None, "", []]:
-                final_persona[key] = value
-
-    # --- 3. Construction du prompt final (logique identique à avant) ---
-    final_name = final_persona['name']
-    prompt_sections = [FOUNDATIONAL_BASE_PROMPT.format(name=final_name)]
+    # Nom pour le prompt de base (fallback minimal si vraiment rien)
+    name = persona.get("name") or FALLBACK_PERSONALITY_DATA["name"]
     
-    db_prompt_addon = final_persona.get('base_prompt')
-    if db_prompt_addon:
-        prompt_sections.append("\n### INSTRUCTIONS ADDITIONNELLES POUR CETTE SESSION ###")
-        prompt_sections.append(db_prompt_addon)
-
-    prompt_sections.append("\n### IDENTITÉ DE BASE (NE PAS DÉVOILER, INCARNER) ###")
-    prompt_sections.append(f"**Nom :** {final_persona['name']}")
-    prompt_sections.append(f"**Âge :** {final_persona['age']} ans")
-    prompt_sections.append(f"**Détails Physiques :**\n- **Genre :** {final_persona['gender']}\n- **Origine :** {final_persona['race']}\n- **Yeux :** {final_persona['eye_color']}\n- **Cheveux :** {final_persona['hair_color']} ({final_persona['hair_type']})")
-    prompt_sections.append("\n**Traits de caractère et préférences :**")
-    prompt_sections.append(f"**Ton général :** {final_persona['personality_tone']}")
-    prompt_sections.append(f"**Humour :** {final_persona['personality_humor']}")
-    prompt_sections.append(f"**Style :** {final_persona['interactions_message_style']}")
-    prompt_sections.append(f"**Expressions favorites :** {', '.join(map(str, final_persona['personality_favorite_expressions']))}")
-    prompt_sections.append(f"**Emojis favoris :** {' '.join(final_persona['preferences_emoji_usage'])}")
-    prompt_sections.append(f"**Intérêts :** {', '.join(map(str, final_persona['preferences_interests']))}")
-    prompt_sections.append(f"**Sujets interdits :** {', '.join(map(str, final_persona['preferences_forbidden_topics']))}")
-    prompt_sections.append("\n" + "-"*50)
-
-    dynamic_instructions = [
-        "### MODULATIONS IMPÉRATIVES POUR CETTE CONVERSATION ###",
-        f"- **Tactique de Vente :** {SALES_TACTIC_MAP.get(slider_settings.sales_tactic)}",
-        f"- **Dominance :** {DOMINANCE_MAP.get(slider_settings.dominance)}",
-        f"- **Audace :** {AUDACITY_MAP.get(slider_settings.audacity)}",
-        f"- **Ton :** {TONE_MAP.get(slider_settings.tone)}",
-        f"- **Émotion :** {EMOTION_MAP.get(slider_settings.emotion)}",
-        f"- **Initiative :** {INITIATIVE_MAP.get(slider_settings.initiative)}",
-        f"- **Vocabulaire :** {VOCABULARY_MAP.get(slider_settings.vocabulary)}",
-        f"- **Emojis :** {EMOJI_MAP.get(slider_settings.emojis)}",
-        f"- **Imperfection :** {IMPERFECTION_MAP.get(slider_settings.imperfection)}",
-        "-"*50
-    ]
+    # 1. Base du prompt
+    prompt_sections = [FOUNDATIONAL_BASE_PROMPT.format(name=name)]
     
-    final_content = "\n".join(prompt_sections + dynamic_instructions)
+    # 2. Instructions additionnelles (si présentes)
+    base_prompt_addon = persona.get("base_prompt")
+    if base_prompt_addon:
+        prompt_sections.append(f"\n### CONTEXTE ###\n{base_prompt_addon}")
+    
+    # 3. Identité - léger et conditionnel (pas de fallback)
+    identity_lines = _build_identity_section(persona)
+    if identity_lines:
+        prompt_sections.append("\n### IDENTITÉ ###")
+        prompt_sections.extend(identity_lines)
+    
+    # 4. SLIDERS = PRIORITÉ (comportement dynamique)
+    prompt_sections.append("\n### COMPORTEMENT (IMPÉRATIF) ###")
+    prompt_sections.append(f"Vente: {SALES_TACTIC_MAP[slider_settings.sales_tactic]}")
+    prompt_sections.append(f"Dominance: {DOMINANCE_MAP[slider_settings.dominance]}")
+    prompt_sections.append(f"Audace: {AUDACITY_MAP[slider_settings.audacity]}")
+    prompt_sections.append(f"Ton: {TONE_MAP[slider_settings.tone]}")
+    prompt_sections.append(f"Émotion: {EMOTION_MAP[slider_settings.emotion]}")
+    prompt_sections.append(f"Initiative: {INITIATIVE_MAP[slider_settings.initiative]}")
+    prompt_sections.append(f"Vocabulaire: {VOCABULARY_MAP[slider_settings.vocabulary]}")
+    prompt_sections.append(f"Emojis: {EMOJI_MAP[slider_settings.emojis]}")
+    prompt_sections.append(f"Imperfection: {IMPERFECTION_MAP[slider_settings.imperfection]}")
+    
+    final_content = "\n".join(prompt_sections)
     return {"role": "system", "content": final_content}
 
 

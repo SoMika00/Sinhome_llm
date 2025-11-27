@@ -7,11 +7,11 @@ from typing import List, Dict, Any, Optional
 import httpx
 
 from ..services import vllm_client
-from ..services.persona_builder2 import (
+from ..services.persona_builder import (
     PersonaSettings, 
     build_dynamic_system_prompt,
     build_script_system_prompt,
-    DEFAULT_PERSONA
+    FALLBACK_PERSONALITY_DATA
 )
 
 ext_router = APIRouter()
@@ -21,6 +21,15 @@ if not logger.handlers:
     logging.basicConfig(level=logging.INFO)
 
 # --- Schemas ---
+REQUIRED_SLIDERS = ['dominance', 'audacity', 'sales_tactic', 'tone', 'emotion', 'initiative', 'vocabulary', 'emojis', 'imperfection']
+
+def _validate_sliders(v: Dict[str, Any]) -> Dict[str, Any]:
+    """Validateur commun pour persona_data"""
+    missing = [s for s in REQUIRED_SLIDERS if s not in v]
+    if missing:
+        raise ValueError(f"persona_data manque les sliders: {missing}")
+    return v
+
 class ChatResponse(BaseModel):
     response: str
 
@@ -38,11 +47,7 @@ class PersonalityChatRequest(BaseModel):
     @field_validator('persona_data')
     @classmethod
     def validate_persona_data(cls, v):
-        required_sliders = ['dominance', 'audacity', 'sales_tactic', 'tone', 'emotion', 'initiative', 'vocabulary', 'emojis', 'imperfection']
-        missing = [s for s in required_sliders if s not in v]
-        if missing:
-            raise ValueError(f"persona_data manque les sliders: {missing}")
-        return v
+        return _validate_sliders(v)
 
 class ScriptChatRequest(BaseModel):
     """Payload pour /script_chat - requiert persona_data + script"""
@@ -55,11 +60,7 @@ class ScriptChatRequest(BaseModel):
     @field_validator('persona_data')
     @classmethod
     def validate_persona_data(cls, v):
-        required_sliders = ['dominance', 'audacity', 'sales_tactic', 'tone', 'emotion', 'initiative', 'vocabulary', 'emojis', 'imperfection']
-        missing = [s for s in required_sliders if s not in v]
-        if missing:
-            raise ValueError(f"persona_data manque les sliders: {missing}")
-        return v
+        return _validate_sliders(v)
 
 # --- Utils persona ---
 def _as_int(x: Any, default: int) -> int:
@@ -142,7 +143,7 @@ async def direct_chat(request: DirectChatRequest):
     # Persona et sliders par defaut
     default_sliders = PersonaSettings()
     system_prompt = build_dynamic_system_prompt(
-        base_persona_dict=DEFAULT_PERSONA,
+        base_persona_dict=FALLBACK_PERSONALITY_DATA,
         slider_settings=default_sliders,
     )
     
