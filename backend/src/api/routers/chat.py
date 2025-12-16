@@ -11,6 +11,7 @@ from ..services.persona_builder import (
     PersonaSettings, 
     build_dynamic_system_prompt,
     build_script_system_prompt,
+    build_followup_system_prompt,
     FALLBACK_PERSONALITY_DATA
 )
 
@@ -56,6 +57,21 @@ class ScriptChatRequest(BaseModel):
     history: List[Dict[str, Any]] = Field(default_factory=list)
     persona_data: Dict[str, Any]
     script: str = Field(..., min_length=1, description="Directive du scenario")
+    
+    @field_validator('persona_data')
+    @classmethod
+    def validate_persona_data(cls, v):
+        return _validate_sliders(v)
+
+
+class FollowupChatRequest(BaseModel):
+    """Payload pour /script_followup - relance quand l'user n'a pas répondu"""
+    session_id: Optional[str] = None
+    message: str = Field(default="", description="Peut être vide pour une relance")
+    history: List[Dict[str, Any]] = Field(default_factory=list)
+    persona_data: Dict[str, Any]
+    script: str = Field(..., min_length=1, description="Directive du scenario")
+    followup_instruction: str = Field(..., min_length=1, description="Consigne de relance (ex: 'Envoie un message taquin pour reprendre contact')")
     
     @field_validator('persona_data')
     @classmethod
@@ -154,7 +170,7 @@ async def direct_chat(request: DirectChatRequest):
     
     try:
         response_text = await vllm_client.get_vllm_response(messages_for_llm)
-        logger.info("[direct_chat] response: %s", str(response_text)[:100])
+        logger.info("[direct_chat] response (%d chars): %s...", len(response_text), str(response_text)[:100])
         return ChatResponse(response=response_text)
     except httpx.ConnectError as e:
         logger.error("[direct_chat] LLM connection failed: %s", e)
@@ -188,7 +204,7 @@ async def personality_chat(request: PersonalityChatRequest):
 
     try:
         response_text = await vllm_client.get_vllm_response(messages_for_llm)
-        logger.info("[personality_chat] response: %s", str(response_text)[:100])
+        logger.info("[personality_chat] response (%d chars): %s...", len(response_text), str(response_text)[:100])
         return ChatResponse(response=response_text)
     except httpx.ConnectError as e:
         logger.error("[personality_chat] LLM connection failed: %s", e)
@@ -226,11 +242,61 @@ async def script_chat(request: ScriptChatRequest):
 
     try:
         response_text = await vllm_client.get_vllm_response(messages_for_llm)
-        logger.info("[script_chat] response: %s", str(response_text)[:100])
+        logger.info("[script_chat] response (%d chars): %s...", len(response_text), str(response_text)[:100])
         return ChatResponse(response=response_text)
     except httpx.ConnectError as e:
         logger.error("[script_chat] LLM connection failed: %s", e)
         raise HTTPException(status_code=503, detail=f"Service LLM indisponible: {e}")
     except Exception as e:
         logger.exception("[script_chat] internal error")
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {e}")
+
+
+# --- ENDPOINT /script_followup ---
+# Endpoint de RELANCE : l'utilisateur n'a pas répondu, on doit recapter son attention.
+# Le champ `followup_instruction` contient la consigne de relance définie dans le script.
+@ext_router.post(
+    "/script_followup",
+    response_model=ChatResponse,
+    summary="Relance: génère un message pour recapter l'attention d'un user qui n'a pas répondu",
+)
+@ext_router.post(
+    "/script_folowup",
+    response_model=ChatResponse,
+    summary="(Alias) Relance: génère un message pour recapter l'attention d'un user qui n'a pas répondu",
+)
+async def script_followup(request: FollowupChatRequest):
+    logger.info("[script_followup] followup_instruction: %s | script: %s",
+                request.followup_instruction[:50], request.script[:50])
+
+    persona_sliders = _persona_from_lambda_dict(request.persona_data)
+
+    # Prompt spécial RELANCE : inclut le contexte "l'user n'a pas répondu"
+    dynamic_system_prompt = build_followup_system_prompt(
+        base_persona_dict=request.persona_data,
+        slider_settings=persona_sliders,
+        script=request.script,
+        followup_instruction=request.followup_instruction,
+    )
+
+    # Pour la relance, on peut avoir un message vide (l'user n'a rien dit)
+    # On utilise la consigne de followup comme "pseudo-message" pour guider le LLM
+    user_text = request.message if request.message.strip() else "[RELANCE - Génère un message pour recapter son attention]"
+
+    messages_for_llm = sanitize_messages(
+        system_msg=dynamic_system_prompt,
+        history=request.history,
+        user_text=user_text,
+    )
+    logger.debug("Messages LLM (followup): %s", messages_for_llm)
+
+    try:
+        response_text = await vllm_client.get_vllm_response(messages_for_llm)
+        logger.info("[script_followup] response (%d chars): %s...", len(response_text), str(response_text)[:100])
+        return ChatResponse(response=response_text)
+    except httpx.ConnectError as e:
+        logger.error("[script_followup] LLM connection failed: %s", e)
+        raise HTTPException(status_code=503, detail=f"Service LLM indisponible: {e}")
+    except Exception as e:
+        logger.exception("[script_followup] internal error")
         raise HTTPException(status_code=500, detail=f"Erreur interne: {e}")

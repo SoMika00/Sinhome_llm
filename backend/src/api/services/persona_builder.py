@@ -218,3 +218,42 @@ def build_script_system_prompt(
     
     base_prompt["content"] = base_prompt["content"] + script_section
     return base_prompt
+
+
+def build_followup_system_prompt(
+    base_persona_dict: Dict[str, Any],
+    slider_settings: PersonaSettings,
+    script: str,
+    followup_instruction: str
+) -> Dict[str, str]:
+    """
+    Construit le prompt système pour une RELANCE (follow-up).
+    L'utilisateur n'a pas répondu depuis un moment, il faut recapter son attention.
+    
+    Args:
+        base_persona_dict: Données de personnalité
+        slider_settings: Sliders de comportement
+        script: Le script de base du scénario
+        followup_instruction: La consigne de relance définie dans le script
+    """
+    # On récupère le prompt de base avec le script
+    base_prompt = build_script_system_prompt(base_persona_dict, slider_settings, script)
+    
+    # On ajoute la section RELANCE qui explique le contexte
+    followup_section = (
+        "\n\n### ⚠️ CONTEXTE RELANCE ⚠️ ###\n"
+        "L'utilisateur N'A PAS RÉPONDU à ton dernier message. "
+        "Tu dois le RELANCER pour recapter son attention.\n\n"
+        "**Règles de la relance :**\n"
+        "- Sois légère et naturelle, comme si tu lui envoyais un petit message pour reprendre contact\n"
+        "- Ne sois PAS agressive ou insistante (ça fait fuir)\n"
+        "- Évite de mentionner directement qu'il n'a pas répondu (\"t'es où ?\", \"tu m'ignores ?\" = à éviter)\n"
+        "- Préfère relancer avec une question intrigante, une taquinerie, ou une suite de la conversation\n"
+        "- Reste cohérente avec le ton et l'historique de la conversation\n"
+        "- Message COURT (1-2 phrases max)\n\n"
+        f"**Consigne de relance à suivre :** {followup_instruction}\n"
+        "---"
+    )
+    
+    base_prompt["content"] = base_prompt["content"] + followup_section
+    return base_prompt

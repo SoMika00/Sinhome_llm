@@ -9,7 +9,7 @@ app = FastAPI(
     version="2.0.0",
 )
 
-# Endpoints principaux : /personality_chat et /script_chat
+# Endpoints principaux : /personality_chat, /script_chat, /script_followup
 app.include_router(ext_router, tags=["Chat"])
 
 @app.get("/", tags=["Health"])
