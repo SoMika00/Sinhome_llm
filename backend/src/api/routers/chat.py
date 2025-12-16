@@ -64,20 +64,6 @@ class ScriptChatRequest(BaseModel):
         return _validate_sliders(v)
 
 
-class FollowupChatRequest(BaseModel):
-    """Payload pour /script_followup - relance quand l'user n'a pas répondu"""
-    session_id: Optional[str] = None
-    message: str = Field(default="", description="Peut être vide pour une relance")
-    history: List[Dict[str, Any]] = Field(default_factory=list)
-    persona_data: Dict[str, Any]
-    script: str = Field(..., min_length=1, description="Directive du scenario")
-    followup_instruction: str = Field(..., min_length=1, description="Consigne de relance (ex: 'Envoie un message taquin pour reprendre contact')")
-    
-    @field_validator('persona_data')
-    @classmethod
-    def validate_persona_data(cls, v):
-        return _validate_sliders(v)
-
 # --- Utils persona ---
 def _as_int(x: Any, default: int) -> int:
     try:
@@ -254,39 +240,36 @@ async def script_chat(request: ScriptChatRequest):
 
 # --- ENDPOINT /script_followup ---
 # Endpoint de RELANCE : l'utilisateur n'a pas répondu, on doit recapter son attention.
-# Le champ `followup_instruction` contient la consigne de relance définie dans le script.
+# MÊME PAYLOAD que /script_chat, mais `message` = la consigne de follow up.
 @ext_router.post(
     "/script_followup",
     response_model=ChatResponse,
-    summary="Relance: génère un message pour recapter l'attention d'un user qui n'a pas répondu",
+    summary="Relance: même payload que /script_chat, message = consigne de follow up",
 )
 @ext_router.post(
     "/script_folowup",
     response_model=ChatResponse,
-    summary="(Alias) Relance: génère un message pour recapter l'attention d'un user qui n'a pas répondu",
+    summary="(Alias) Relance: même payload que /script_chat, message = consigne de follow up",
 )
-async def script_followup(request: FollowupChatRequest):
-    logger.info("[script_followup] followup_instruction: %s | script: %s",
-                request.followup_instruction[:50], request.script[:50])
+async def script_followup(request: ScriptChatRequest):
+    # message = la consigne de follow up (ex: "Envoie un message taquin pour reprendre contact")
+    logger.info("[script_followup] followup_instruction (message): %s | script: %s",
+                request.message[:50], request.script[:50])
 
     persona_sliders = _persona_from_lambda_dict(request.persona_data)
 
-    # Prompt spécial RELANCE : inclut le contexte "l'user n'a pas répondu"
+    # Prompt spécial RELANCE : inclut le contexte "l'user n'a pas répondu" + la consigne
     dynamic_system_prompt = build_followup_system_prompt(
         base_persona_dict=request.persona_data,
         slider_settings=persona_sliders,
         script=request.script,
-        followup_instruction=request.followup_instruction,
+        followup_instruction=request.message,  # message = consigne de followup
     )
-
-    # Pour la relance, on peut avoir un message vide (l'user n'a rien dit)
-    # On utilise la consigne de followup comme "pseudo-message" pour guider le LLM
-    user_text = request.message if request.message.strip() else "[RELANCE - Génère un message pour recapter son attention]"
 
     messages_for_llm = sanitize_messages(
         system_msg=dynamic_system_prompt,
         history=request.history,
-        user_text=user_text,
+        user_text="[RELANCE]",  # placeholder, le vrai contenu est dans le system prompt
     )
     logger.debug("Messages LLM (followup): %s", messages_for_llm)
 
