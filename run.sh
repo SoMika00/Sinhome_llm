@@ -37,5 +37,6 @@ echo
 echo "[OK] Environnement demarre"
 echo "     - Backend  : http://localhost:8001"
 echo "     - vLLM API : http://localhost:8000/v1"
-echo "     - Logs     : docker compose logs -f"
+echo "     - Logs Docker (brut)   : docker compose logs -f"
+echo "     - Logs lisibles (live) : curl -N http://localhost:8001/logs/stream"
 echo "     - Stop     : docker compose down"

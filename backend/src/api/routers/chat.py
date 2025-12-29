@@ -1,5 +1,6 @@
 # backend/src/api/routers/chat.py
 
+import asyncio
 import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -14,6 +15,7 @@ from ..services.persona_builder import (
     build_followup_system_prompt,
     FALLBACK_PERSONALITY_DATA
 )
+from ..services.conversation_logger import log_conversation, log_error
 
 ext_router = APIRouter()
 
@@ -157,12 +159,26 @@ async def direct_chat(request: DirectChatRequest):
     try:
         response_text = await vllm_client.get_vllm_response(messages_for_llm)
         logger.info("[direct_chat] response (%d chars): %s...", len(response_text), str(response_text)[:100])
+        
+        # Log de la conversation (fire-and-forget, zéro latence)
+        asyncio.create_task(log_conversation(
+            endpoint="/direct_chat",
+            system_prompt=system_prompt.get("content", ""),
+            history=[],
+            user_message=request.message,
+            ai_response=response_text,
+            session_id=None,
+            raw_payload={"message": request.message},
+        ))
+        
         return ChatResponse(response=response_text)
     except httpx.ConnectError as e:
         logger.error("[direct_chat] LLM connection failed: %s", e)
+        asyncio.create_task(log_error("/direct_chat", str(e), context={"message": request.message[:200]}))
         raise HTTPException(status_code=503, detail=f"Service LLM indisponible: {e}")
     except Exception as e:
         logger.exception("[direct_chat] internal error")
+        asyncio.create_task(log_error("/direct_chat", str(e), context={"message": request.message[:200]}))
         raise HTTPException(status_code=500, detail=f"Erreur interne: {e}")
 
 
@@ -191,12 +207,31 @@ async def personality_chat(request: PersonalityChatRequest):
     try:
         response_text = await vllm_client.get_vllm_response(messages_for_llm)
         logger.info("[personality_chat] response (%d chars): %s...", len(response_text), str(response_text)[:100])
+        
+        # Log de la conversation (fire-and-forget, zéro latence)
+        asyncio.create_task(log_conversation(
+            endpoint="/personality_chat",
+            system_prompt=dynamic_system_prompt.get("content", ""),
+            history=request.history,
+            user_message=request.message,
+            ai_response=response_text,
+            session_id=request.session_id,
+            raw_payload={
+                "session_id": request.session_id,
+                "message": request.message,
+                "history": request.history,
+                "persona_data": request.persona_data,
+            },
+        ))
+        
         return ChatResponse(response=response_text)
     except httpx.ConnectError as e:
         logger.error("[personality_chat] LLM connection failed: %s", e)
+        asyncio.create_task(log_error("/personality_chat", str(e), session_id=request.session_id))
         raise HTTPException(status_code=503, detail=f"Service LLM indisponible: {e}")
     except Exception as e:
         logger.exception("[personality_chat] internal error")
+        asyncio.create_task(log_error("/personality_chat", str(e), session_id=request.session_id))
         raise HTTPException(status_code=500, detail=f"Erreur interne: {e}")
 
 
@@ -229,12 +264,32 @@ async def script_chat(request: ScriptChatRequest):
     try:
         response_text = await vllm_client.get_vllm_response(messages_for_llm)
         logger.info("[script_chat] response (%d chars): %s...", len(response_text), str(response_text)[:100])
+        
+        # Log de la conversation (fire-and-forget, zéro latence)
+        asyncio.create_task(log_conversation(
+            endpoint="/script_chat",
+            system_prompt=dynamic_system_prompt.get("content", ""),
+            history=request.history,
+            user_message=request.message,
+            ai_response=response_text,
+            session_id=request.session_id,
+            raw_payload={
+                "session_id": request.session_id,
+                "message": request.message,
+                "history": request.history,
+                "persona_data": request.persona_data,
+                "script": request.script,
+            },
+        ))
+        
         return ChatResponse(response=response_text)
     except httpx.ConnectError as e:
         logger.error("[script_chat] LLM connection failed: %s", e)
+        asyncio.create_task(log_error("/script_chat", str(e), session_id=request.session_id))
         raise HTTPException(status_code=503, detail=f"Service LLM indisponible: {e}")
     except Exception as e:
         logger.exception("[script_chat] internal error")
+        asyncio.create_task(log_error("/script_chat", str(e), session_id=request.session_id))
         raise HTTPException(status_code=500, detail=f"Erreur interne: {e}")
 
 
@@ -266,20 +321,42 @@ async def script_followup(request: ScriptChatRequest):
         followup_instruction=request.message,  # message = consigne de followup
     )
 
+    # On utilise un marqueur spécial de silence au lieu de "[RELANCE]"
+    # pour que le modèle comprenne qu'il doit agir sur le silence.
     messages_for_llm = sanitize_messages(
         system_msg=dynamic_system_prompt,
         history=request.history,
-        user_text="[RELANCE]",  # placeholder, le vrai contenu est dans le system prompt
+        user_text="(Silence prolongé de l'utilisateur...)", 
     )
     logger.debug("Messages LLM (followup): %s", messages_for_llm)
 
     try:
         response_text = await vllm_client.get_vllm_response(messages_for_llm)
         logger.info("[script_followup] response (%d chars): %s...", len(response_text), str(response_text)[:100])
+        
+        # Log de la conversation (fire-and-forget, zéro latence)
+        asyncio.create_task(log_conversation(
+            endpoint="/script_followup",
+            system_prompt=dynamic_system_prompt.get("content", ""),
+            history=request.history,
+            user_message=f"[RELANCE] {request.message}",
+            ai_response=response_text,
+            session_id=request.session_id,
+            raw_payload={
+                "session_id": request.session_id,
+                "message": request.message,
+                "history": request.history,
+                "persona_data": request.persona_data,
+                "script": request.script,
+            },
+        ))
+        
         return ChatResponse(response=response_text)
     except httpx.ConnectError as e:
         logger.error("[script_followup] LLM connection failed: %s", e)
+        asyncio.create_task(log_error("/script_followup", str(e), session_id=request.session_id))
         raise HTTPException(status_code=503, detail=f"Service LLM indisponible: {e}")
     except Exception as e:
         logger.exception("[script_followup] internal error")
+        asyncio.create_task(log_error("/script_followup", str(e), session_id=request.session_id))
         raise HTTPException(status_code=500, detail=f"Erreur interne: {e}")
