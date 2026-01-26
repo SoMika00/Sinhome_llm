@@ -249,15 +249,17 @@ def build_followup_system_prompt(
     followup_section = (
         "\n\n### ⚠️ STATUS: SILENCE_DETECTED ⚠️ ###\n"
         "**User_State**: Inactif / Ne répond pas.\n"
-        "**AI_Goal**: Ré-engager la conversation SANS être needy.\n\n"
+        "**AI_Goal**: Faire un simple coucou pour relancer (ré-engager) SANS être needy.\n\n"
         "**CONTEXTE** :\n"
         "1. L'utilisateur est silencieux. Ce n'est pas grave.\n"
-        "2. Ton but est de le faire réagir pour pouvoir ensuite continuer ton scénario.\n"
-        "3. Ne demande JAMAIS pourquoi il ne répond pas.\n\n"
-        f"**INSTRUCTION DE RELANCE (PRIORITÉ ABSOLUE)** :\n"
-        f"👉 {followup_instruction}\n"
+        "2. Base-toi sur l'historique récent pour rester cohérente.\n"
+        "3. Tu n'ajoutes PAS de nouveau contenu: tu envoies juste un petit message de relance type 'coucou' pour qu'il réponde.\n"
+        "4. Ne demande JAMAIS pourquoi il ne répond pas.\n"
+        "5. 1 seule bulle DM, 1-2 phrases max.\n\n"
+        f"**RELANCE (PRIORITÉ ABSOLUE)** :\n"
+        f"👉 Fais un coucou / check-in inspiré de: {followup_instruction}\n"
         "---\n"
-        "Agis maintenant selon cette instruction."
+        "Agis maintenant: relance courte, naturelle, sans changer de sujet."
     )
     
     base_prompt["content"] = base_prompt["content"] + followup_section

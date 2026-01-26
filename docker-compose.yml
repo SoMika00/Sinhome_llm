@@ -7,7 +7,7 @@ services:
     volumes:
       - /scratch/hf_cache:/root/.cache/huggingface/hub
     environment:
-      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES:-all}"
     command: >
       --host 0.0.0.0
       --model ${VLLM_MODEL_ID}
@@ -25,7 +25,9 @@ services:
       - "8001:8001"
     volumes:
       - ./backend/src:/app/src
+      - ./logs:/app/logs
     environment:
       VLLM_API_BASE_URL: "http://vllm:8000/v1"
       VLLM_MODEL_NAME: "${VLLM_MODEL_ID}"
+      SINHOME_LOGS_DIR: "/app/logs"
     restart: on-failure

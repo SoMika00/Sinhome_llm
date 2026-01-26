@@ -16,7 +16,15 @@ import json
 _log_queue: asyncio.Queue = asyncio.Queue()
 
 # Chemin de base pour les logs
-LOGS_BASE_DIR = Path(__file__).parent.parent.parent.parent / "logs"
+def _default_logs_base_dir() -> Path:
+    p = Path(__file__).resolve()
+    for parent in (p.parent, *p.parents):
+        if (parent / "docker-compose.yml").exists() or (parent / ".git").exists():
+            return parent / "logs"
+    return Path("/app/logs")
+
+
+LOGS_BASE_DIR = Path(os.getenv("SINHOME_LOGS_DIR", str(_default_logs_base_dir())))
 CONVERSATIONS_DIR = LOGS_BASE_DIR / "conversations"
 DAILY_DIR = LOGS_BASE_DIR / "daily"
 

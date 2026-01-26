@@ -25,7 +25,12 @@ def contains_chinese(text: str) -> bool:
     return False
 
 # --- MODIFIÉ : La fonction d'appel à vLLM intègre la logique de relance ---
-async def get_vllm_response(messages: List[Dict[str, str]]) -> str:
+async def get_vllm_response(
+    messages: List[Dict[str, str]],
+    temperature: float = 0.65,
+    top_p: float = 0.9,
+    max_tokens: int = 1024,
+) -> str:
     """
     Prend une liste de messages complète, la transmet à l'API vLLM,
     et inclut une logique de relance en cas de réponse en chinois.
@@ -34,9 +39,9 @@ async def get_vllm_response(messages: List[Dict[str, str]]) -> str:
     vllm_payload = {
         "model": settings.VLLM_MODEL_NAME,
         "messages": messages,
-        "temperature": 0.75,
-        "top_p": 0.9,
-        "max_tokens": 1024
+        "temperature": temperature,
+        "top_p": top_p,
+        "max_tokens": max_tokens
     }
 
     last_response_text = ""

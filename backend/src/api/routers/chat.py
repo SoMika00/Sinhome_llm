@@ -6,15 +6,17 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Dict, Any, Optional
 import httpx
+import re
 
 from ..services import vllm_client
+from ..config import settings
 from ..services.persona_builder import (
     PersonaSettings, 
     build_dynamic_system_prompt,
-    build_script_system_prompt,
     build_followup_system_prompt,
     FALLBACK_PERSONALITY_DATA
 )
+from ..services.script_persona_builder import build_script_chat_system_prompt
 from ..services.conversation_logger import log_conversation, log_error
 
 ext_router = APIRouter()
@@ -135,6 +137,130 @@ def sanitize_messages(
     msgs.extend(collapsed)
     return msgs
 
+
+def _trim_history_last_couples(
+    history: List[Dict[str, Any]],
+    couples_to_keep: int,
+) -> List[Dict[str, Any]]:
+    """
+    Pour /script_chat uniquement: garde les N derniers "couples" (échanges) sans
+    modifier le contenu des messages.
+
+    Règle de comptage:
+    - Les messages consécutifs du même rôle forment un bloc (AA ou UU).
+    - Un "couple" = 2 blocs consécutifs (ex: A U) ou (U A).
+    - On garde les derniers N couples (donc jusqu'à 2N blocs).
+    """
+    if couples_to_keep <= 0:
+        return []
+
+    # 1) Filtrer les messages (sans fusion)
+    filtered: List[Dict[str, Any]] = []
+    for m in history:
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        content = m.get("content")
+        if content is None or (isinstance(content, str) and not content.strip()):
+            continue
+        # /script_chat: ignorer le bruit assistant (ex: "🤣🤣")
+        if role == "assistant" and _looks_like_only_emojis_or_punct(content):
+            continue
+        filtered.append({"role": role, "content": content})
+
+    if not filtered:
+        return []
+
+    # 2) Grouper en blocs consécutifs (sans fusion)
+    blocks: List[List[Dict[str, Any]]] = []
+    for m in filtered:
+        if not blocks or blocks[-1][0]["role"] != m["role"]:
+            blocks.append([m])
+        else:
+            blocks[-1].append(m)
+
+    # 3) Prendre les derniers N couples (2 blocs par couple)
+    couples: List[List[Dict[str, Any]]] = []
+    i = len(blocks) - 1
+    while i >= 1 and len(couples) < couples_to_keep:
+        couples.append(blocks[i - 1] + blocks[i])
+        i -= 2
+    couples.reverse()
+
+    trimmed: List[Dict[str, Any]] = []
+    for c in couples:
+        trimmed.extend(c)
+    return trimmed
+
+
+def _looks_like_only_emojis_or_punct(x: Any) -> bool:
+    if not isinstance(x, str):
+        return False
+    s = x.strip()
+    if not s:
+        return True
+    # Si aucun caractère alphanumérique (lettre/chiffre), c'est du "bruit" (emojis/punct)
+    return re.search(r"[A-Za-z0-9À-ÖØ-öø-ÿ]", s) is None
+
+
+def sanitize_messages_script(
+    system_msg: Dict[str, Any] | None,
+    history: List[Dict[str, Any]],
+    user_text: Any,
+    couples_to_keep: int = 5,
+) -> List[Dict[str, Any]]:
+    """Sanitization spécifique /script_chat: trim par couples, sans collapse."""
+    msgs: List[Dict[str, Any]] = []
+
+    if system_msg and system_msg.get("role") == "system":
+        msgs.append({"role": "system", "content": system_msg.get("content", "")})
+
+    trimmed_history = _trim_history_last_couples(history, couples_to_keep)
+    msgs.extend(trimmed_history)
+
+    msgs.append({"role": "user", "content": user_text})
+    return msgs
+
+
+def sanitize_messages_script_midnight(
+    system_msg: Dict[str, Any] | None,
+    history: List[Dict[str, Any]],
+    user_text: Any,
+    couples_to_keep: int = 5,
+) -> List[Dict[str, Any]]:
+    msgs: List[Dict[str, Any]] = []
+
+    if system_msg and system_msg.get("role") == "system":
+        msgs.append({"role": "system", "content": system_msg.get("content", "")})
+
+    trimmed_history = _trim_history_last_couples(history, couples_to_keep)
+
+    normalized: List[Dict[str, Any]] = []
+    for m in trimmed_history:
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        content = m.get("content")
+        if content is None or (isinstance(content, str) and not content.strip()):
+            continue
+        if not normalized:
+            if role != "user":
+                continue
+            normalized.append({"role": role, "content": content})
+            continue
+        if normalized[-1]["role"] == role:
+            normalized[-1]["content"] = _merge_content(normalized[-1]["content"], content)
+        else:
+            normalized.append({"role": role, "content": content})
+
+    if normalized and normalized[-1]["role"] == "user":
+        normalized[-1]["content"] = _merge_content(normalized[-1]["content"], user_text)
+    else:
+        normalized.append({"role": "user", "content": user_text})
+
+    msgs.extend(normalized)
+    return msgs
+
 # --- ENDPOINT /direct_chat (test simple) ---
 @ext_router.post(
     "/direct_chat",
@@ -248,21 +374,35 @@ async def script_chat(request: ScriptChatRequest):
     persona_sliders = _persona_from_lambda_dict(request.persona_data)
     
     # Construction du prompt avec le script additionnel
-    dynamic_system_prompt = build_script_system_prompt(
+    dynamic_system_prompt = build_script_chat_system_prompt(
         base_persona_dict=request.persona_data,
         slider_settings=persona_sliders,
         script=request.script,
     )
 
-    messages_for_llm = sanitize_messages(
-        system_msg=dynamic_system_prompt,
-        history=request.history,
-        user_text=request.message,
-    )
+    if "midnight" in settings.VLLM_MODEL_NAME.lower():
+        messages_for_llm = sanitize_messages_script_midnight(
+            system_msg=dynamic_system_prompt,
+            history=request.history,
+            user_text=request.message,
+            couples_to_keep=5,
+        )
+    else:
+        messages_for_llm = sanitize_messages_script(
+            system_msg=dynamic_system_prompt,
+            history=request.history,
+            user_text=request.message,
+            couples_to_keep=5,
+        )
     logger.debug("Messages LLM (avec script): %s", messages_for_llm)
 
     try:
-        response_text = await vllm_client.get_vllm_response(messages_for_llm)
+        response_text = await vllm_client.get_vllm_response(
+            messages_for_llm,
+            temperature=0.65,
+            top_p=0.9,
+            max_tokens=512,
+        )
         logger.info("[script_chat] response (%d chars): %s...", len(response_text), str(response_text)[:100])
         
         # Log de la conversation (fire-and-forget, zéro latence)
@@ -323,15 +463,29 @@ async def script_followup(request: ScriptChatRequest):
 
     # On utilise un marqueur spécial de silence au lieu de "[RELANCE]"
     # pour que le modèle comprenne qu'il doit agir sur le silence.
-    messages_for_llm = sanitize_messages(
-        system_msg=dynamic_system_prompt,
-        history=request.history,
-        user_text="(Silence prolongé de l'utilisateur...)", 
-    )
+    if "midnight" in settings.VLLM_MODEL_NAME.lower():
+        messages_for_llm = sanitize_messages_script_midnight(
+            system_msg=dynamic_system_prompt,
+            history=request.history,
+            user_text="(Silence prolongé de l'utilisateur...)",
+            couples_to_keep=5,
+        )
+    else:
+        messages_for_llm = sanitize_messages_script(
+            system_msg=dynamic_system_prompt,
+            history=request.history,
+            user_text="(Silence prolongé de l'utilisateur...)",
+            couples_to_keep=5,
+        )
     logger.debug("Messages LLM (followup): %s", messages_for_llm)
 
     try:
-        response_text = await vllm_client.get_vllm_response(messages_for_llm)
+        response_text = await vllm_client.get_vllm_response(
+            messages_for_llm,
+            temperature=0.65,
+            top_p=0.9,
+            max_tokens=128,
+        )
         logger.info("[script_followup] response (%d chars): %s...", len(response_text), str(response_text)[:100])
         
         # Log de la conversation (fire-and-forget, zéro latence)
