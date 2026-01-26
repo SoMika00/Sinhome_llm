@@ -138,6 +138,60 @@ def sanitize_messages(
     return msgs
 
 
+def sanitize_messages_midnight(
+    system_msg: Dict[str, Any] | None,
+    history: List[Dict[str, Any]],
+    user_text: Any,
+) -> List[Dict[str, Any]]:
+    msgs: List[Dict[str, Any]] = []
+
+    system_text = ""
+    if system_msg and system_msg.get("role") == "system":
+        system_text = system_msg.get("content", "")
+
+    collapsed: List[Dict[str, Any]] = []
+    for m in history:
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        content = m.get("content")
+        if content is None or (isinstance(content, str) and not content.strip()):
+            continue
+        if collapsed and collapsed[-1]["role"] == role:
+            collapsed[-1]["content"] = _merge_content(collapsed[-1]["content"], content)
+        else:
+            collapsed.append({"role": role, "content": content})
+
+    if collapsed and collapsed[-1]["role"] == "user":
+        collapsed[-1]["content"] = _merge_content(collapsed[-1]["content"], user_text)
+    else:
+        collapsed.append({"role": "user", "content": user_text})
+
+    alternating: List[Dict[str, Any]] = []
+    for m in collapsed:
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        if not alternating:
+            if role != "user":
+                continue
+            alternating.append({"role": role, "content": m.get("content")})
+            continue
+        if alternating[-1]["role"] == role:
+            alternating[-1]["content"] = _merge_content(alternating[-1]["content"], m.get("content"))
+        else:
+            alternating.append({"role": role, "content": m.get("content")})
+
+    if system_text:
+        if alternating and alternating[0].get("role") == "user":
+            alternating[0]["content"] = _merge_content(system_text, alternating[0].get("content"))
+        else:
+            alternating.insert(0, {"role": "user", "content": system_text})
+
+    msgs.extend(alternating)
+    return msgs
+
+
 def _trim_history_last_couples(
     history: List[Dict[str, Any]],
     couples_to_keep: int,
@@ -230,8 +284,9 @@ def sanitize_messages_script_midnight(
 ) -> List[Dict[str, Any]]:
     msgs: List[Dict[str, Any]] = []
 
+    system_text = ""
     if system_msg and system_msg.get("role") == "system":
-        msgs.append({"role": "system", "content": system_msg.get("content", "")})
+        system_text = system_msg.get("content", "")
 
     trimmed_history = _trim_history_last_couples(history, couples_to_keep)
 
@@ -258,8 +313,35 @@ def sanitize_messages_script_midnight(
     else:
         normalized.append({"role": "user", "content": user_text})
 
-    msgs.extend(normalized)
+    alternating: List[Dict[str, Any]] = []
+    for m in normalized:
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        if not alternating:
+            if role != "user":
+                continue
+            alternating.append({"role": role, "content": m.get("content")})
+            continue
+        if alternating[-1]["role"] == role:
+            alternating[-1]["content"] = _merge_content(alternating[-1]["content"], m.get("content"))
+        else:
+            alternating.append({"role": role, "content": m.get("content")})
+
+    if system_text:
+        if alternating and alternating[0].get("role") == "user":
+            alternating[0]["content"] = _merge_content(system_text, alternating[0].get("content"))
+        else:
+            alternating.insert(0, {"role": "user", "content": system_text})
+
+    msgs.extend(alternating)
     return msgs
+
+def _strip_midnight_emoji_tags(text: Any) -> Any:
+    if not isinstance(text, str) or not text:
+        return text
+    pattern = re.compile(r"\[emoji:\s*([^\]]+?)\s*\]", flags=re.IGNORECASE)
+    return pattern.sub(lambda m: m.group(1).strip(), text)
 
 # --- ENDPOINT /direct_chat (test simple) ---
 @ext_router.post(
@@ -277,13 +359,24 @@ async def direct_chat(request: DirectChatRequest):
         slider_settings=default_sliders,
     )
     
-    messages_for_llm = [
-        system_prompt,
-        {"role": "user", "content": request.message}
-    ]
+    if "midnight" in settings.VLLM_MODEL_NAME.lower():
+        messages_for_llm = sanitize_messages_midnight(
+            system_msg=system_prompt,
+            history=[],
+            user_text=request.message,
+        )
+    else:
+        messages_for_llm = [
+            system_prompt,
+            {"role": "user", "content": request.message}
+        ]
     
     try:
-        response_text = await vllm_client.get_vllm_response(messages_for_llm)
+        stop = None
+        if "midnight" in settings.VLLM_MODEL_NAME.lower():
+            stop = ["</s>", "[/INST]"]
+
+        response_text = await vllm_client.get_vllm_response(messages_for_llm, stop=stop)
         logger.info("[direct_chat] response (%d chars): %s...", len(response_text), str(response_text)[:100])
         
         # Log de la conversation (fire-and-forget, zéro latence)
@@ -323,15 +416,26 @@ async def personality_chat(request: PersonalityChatRequest):
         slider_settings=persona_sliders,
     )
 
-    messages_for_llm = sanitize_messages(
-        system_msg=dynamic_system_prompt,
-        history=request.history,
-        user_text=request.message,
-    )
+    if "midnight" in settings.VLLM_MODEL_NAME.lower():
+        messages_for_llm = sanitize_messages_midnight(
+            system_msg=dynamic_system_prompt,
+            history=request.history,
+            user_text=request.message,
+        )
+    else:
+        messages_for_llm = sanitize_messages(
+            system_msg=dynamic_system_prompt,
+            history=request.history,
+            user_text=request.message,
+        )
     logger.debug("Messages LLM: %s", messages_for_llm)
 
     try:
-        response_text = await vllm_client.get_vllm_response(messages_for_llm)
+        stop = None
+        if "midnight" in settings.VLLM_MODEL_NAME.lower():
+            stop = ["</s>", "[/INST]"]
+
+        response_text = await vllm_client.get_vllm_response(messages_for_llm, stop=stop)
         logger.info("[personality_chat] response (%d chars): %s...", len(response_text), str(response_text)[:100])
         
         # Log de la conversation (fire-and-forget, zéro latence)
@@ -387,6 +491,10 @@ async def script_chat(request: ScriptChatRequest):
             user_text=request.message,
             couples_to_keep=5,
         )
+        logger.info(
+            "[script_chat][midnight] roles: %s",
+            [m.get("role") for m in messages_for_llm if m.get("role") != "system"],
+        )
     else:
         messages_for_llm = sanitize_messages_script(
             system_msg=dynamic_system_prompt,
@@ -397,12 +505,19 @@ async def script_chat(request: ScriptChatRequest):
     logger.debug("Messages LLM (avec script): %s", messages_for_llm)
 
     try:
+        stop = None
+        if "midnight" in settings.VLLM_MODEL_NAME.lower():
+            stop = ["</s>", "[/INST]"]
+
         response_text = await vllm_client.get_vllm_response(
             messages_for_llm,
             temperature=0.65,
             top_p=0.9,
             max_tokens=512,
+            stop=stop,
         )
+        if "midnight" in settings.VLLM_MODEL_NAME.lower():
+            response_text = _strip_midnight_emoji_tags(response_text)
         logger.info("[script_chat] response (%d chars): %s...", len(response_text), str(response_text)[:100])
         
         # Log de la conversation (fire-and-forget, zéro latence)
@@ -480,12 +595,19 @@ async def script_followup(request: ScriptChatRequest):
     logger.debug("Messages LLM (followup): %s", messages_for_llm)
 
     try:
+        stop = None
+        if "midnight" in settings.VLLM_MODEL_NAME.lower():
+            stop = ["</s>", "[/INST]"]
+
         response_text = await vllm_client.get_vllm_response(
             messages_for_llm,
             temperature=0.65,
             top_p=0.9,
             max_tokens=128,
+            stop=stop,
         )
+        if "midnight" in settings.VLLM_MODEL_NAME.lower():
+            response_text = _strip_midnight_emoji_tags(response_text)
         logger.info("[script_followup] response (%d chars): %s...", len(response_text), str(response_text)[:100])
         
         # Log de la conversation (fire-and-forget, zéro latence)

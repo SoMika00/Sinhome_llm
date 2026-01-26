@@ -2,7 +2,7 @@
 
 import httpx
 import logging
-from typing import List, Dict
+from typing import List, Dict, Optional, Union
 from fastapi import HTTPException, status
 
 from ..config import settings
@@ -30,6 +30,7 @@ async def get_vllm_response(
     temperature: float = 0.65,
     top_p: float = 0.9,
     max_tokens: int = 1024,
+    stop: Optional[Union[str, List[str]]] = None,
 ) -> str:
     """
     Prend une liste de messages complète, la transmet à l'API vLLM,
@@ -41,7 +42,8 @@ async def get_vllm_response(
         "messages": messages,
         "temperature": temperature,
         "top_p": top_p,
-        "max_tokens": max_tokens
+        "max_tokens": max_tokens,
+        "stop": stop,
     }
 
     last_response_text = ""
