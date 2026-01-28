@@ -10,6 +10,14 @@ if [ $# -lt 1 ]; then
 fi
 
 MODEL_NAME="$1"
+case "$MODEL_NAME" in
+  qwen2)
+    MODEL_NAME="qwen2"
+    ;;
+  midnight)
+    MODEL_NAME="midnight"
+    ;;
+esac
 ENV_FILE="models_env/${MODEL_NAME}.env"
 
 if [ ! -f "$ENV_FILE" ]; then
@@ -18,6 +26,18 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 echo "[+] Lancement avec le modele : ${MODEL_NAME}"
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Erreur : docker n'est pas installe ou n'est pas dans le PATH."
+  exit 1
+fi
+
+if ! docker compose version >/dev/null 2>&1; then
+  echo "Erreur : docker compose n'est pas disponible (plugin Compose v2 requis)."
+  exit 1
+fi
+
+mkdir -p logs hf_cache
 
 DOTENV_FILE=".env"
 BACKUP_ENV_FILE=""
@@ -39,8 +59,7 @@ fi
 # Copie le fichier env pour docker compose
 cp "$ENV_FILE" "$DOTENV_FILE"
 
-echo "[*] .env genere :"
-cat "$DOTENV_FILE"
+echo "[*] .env genere (contenu masque)"
 
 # Valide la config interpolee
 echo "[*] Validation docker compose..."

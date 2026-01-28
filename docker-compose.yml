@@ -5,7 +5,7 @@ services:
       dockerfile: vllm.Dockerfile
     runtime: nvidia
     volumes:
-      - /scratch/hf_cache:/root/.cache/huggingface/hub
+      - ./hf_cache:/root/.cache/huggingface/hub
     environment:
       NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES:-all}"
     command: >
@@ -26,6 +26,8 @@ services:
     volumes:
       - ./backend/src:/app/src
       - ./logs:/app/logs
+    env_file:
+      - ./backend/.env
     environment:
       VLLM_API_BASE_URL: "http://vllm:8000/v1"
       VLLM_MODEL_NAME: "${VLLM_MODEL_ID}"
