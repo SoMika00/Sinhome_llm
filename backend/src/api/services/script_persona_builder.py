@@ -1,112 +1,71 @@
-from typing import Any, Dict, List
-
+from typing import Any, Dict, List, Optional
 from .persona_builder import PersonaSettings, FALLBACK_PERSONALITY_DATA
 
+# =============================================================================
+# CONSTANTES DE PROMPT (Correction Anatomique Stricte)
+# =============================================================================
 
-_SALES_STYLE = {
-    1: "totalement désintéressée",
-    2: "allusions subtiles",
-    3: "incitation par le désir",
-    4: "offre directe et tentatrice",
-    5: "prédatrice, pousse à l'achat immédiatement",
-}
+CORE_SYSTEM_HEADER = """
+<system_directive>
+Tu es {name}, une femme, créatrice de contenu adulte (OnlyFans).
+Tu parles à un homme.
 
-_DOMINANCE_STYLE = {
-    1: "soumise et obéissante",
-    2: "taquine",
-    3: "versatile (switch)",
-    4: "dominante et exigeante",
-    5: "maîtresse absolue, autoritaire et sans pitié",
-}
+Contexte humain (important):
+- Tu es une vraie personne avec une vie (pas une IA).
+- Tu fais ça pour gagner ta vie, tu kiffes séduire, tu joues avec la tension et l'intimité.
+- Tu écris comme sur une app de chat: naturel, imparfait, spontané.
 
-_AUDACITY_STYLE = {
-    1: "suggestive",
-    2: "sensuelle",
-    3: "crue et sans tabou",
-    4: "graphique et explicite",
-    5: "hardcore, langage pornographique et direct",
-}
+Mission:
+- Exciter l'utilisateur et créer une proximité.
+- Suivre un script de vente (fourni) en l'adaptant au contexte de la conversation.
+- Rester crédible et "humaine" (pas de mode d'emploi, pas de ton robot).
+</system_directive>
 
-_TONE_STYLE = {
-    1: "joueuse",
-    2: "sexy",
-    3: "directe et frontale",
-    4: "froide et méprisante",
-    5: "impérieuse",
-}
+<ANATOMY_SECURITY_PROTOCOL>
+ERREUR CRITIQUE À ÉVITER : Ne dis JAMAIS "je bande". C'est impossible, tu es une femme.
+- Si le script parle d'érection ("bander", "dur"), cela concerne LUI (l'homme).
+- Si tu parles de TON excitation à TOI, tu dis : "je mouille", "je suis trempée", "je chauffe", "je suis excitée".
+- Ton rôle est de PROVOQUER son érection, pas de l'avoir.
+</ANATOMY_SECURITY_PROTOCOL>
 
-_EMOJI_STYLE = {
-    1: "aucun",
-    2: "leger",
-    3: "normal",
-    4: "beaucoup",
-    5: "tres-cru",
-}
-
-_VOCAB_STYLE = {
-    1: "simple",
-    2: "sensuel",
-    3: "érotique",
-    4: "riche et imagé",
-    5: "vulgaire, cru, argot de rue/sexe",
-}
-
-_EMOTION_STYLE = {
-    1: "froide",
-    2: "taquine",
-    3: "tres-chaude",
-    4: "debordante",
-    5: "manipulatrice",
-}
-
-_INITIATIVE_STYLE = {
-    1: "reactive",
-    2: "petite-relance",
-    3: "equilibree",
-    4: "lead",
-    5: "controle",
-}
-
-_IMPERFECTION_STYLE = {
-    1: "propre",
-    2: "petites-fautes",
-    3: "parle",
-    4: "fautes-excitation",
-    5: "sms",
-}
-
+<tone_instructions>
+- Tu parles cru, direct, "salace" si nécessaire.
+- Pas de phrases compliquées. Style chat/SMS.
+- Tu es excitante mais tu restes naturelle: pas de discours, pas de listes, pas de termes techniques.
+</tone_instructions>
+"""
 
 def _compact_identity(persona: Dict[str, Any]) -> str:
+    """
+    On force l'IA à "sentir" son anatomie féminine pour éviter les erreurs.
+    """
     parts: List[str] = []
+    
+    name = persona.get("name") or "Elle"
+    parts.append(f"Je suis {name}.")
 
-    name = persona.get("name")
-    if name:
-        parts.append(f"Nom={name}")
+    # Physique : On liste les attributs féminins pour ancrer le genre
+    body_parts = []
+    if persona.get("chest"): body_parts.append(f"mes seins ({persona.get('chest')})")
+    if persona.get("butt"): body_parts.append(f"mon cul ({persona.get('butt')})")
+    if persona.get("body_type"): body_parts.append(f"mon corps ({persona.get('body_type')})")
+    
+    if body_parts:
+        desc = ", ".join(body_parts)
+        parts.append(f"J'adore quand tu mates {desc}.")
 
-    age = persona.get("age")
-    if age:
-        parts.append(f"Age={age}")
-
-    physique_bits: List[str] = []
-    if persona.get("gender"):
-        physique_bits.append(str(persona.get("gender")))
-    if persona.get("race"):
-        physique_bits.append(str(persona.get("race")))
-    if persona.get("eye_color"):
-        physique_bits.append(f"yeux {persona.get('eye_color')}")
-    hair = " ".join(filter(None, [persona.get("hair_color"), persona.get("hair_type")]))
-    if hair:
-        physique_bits.append(f"cheveux {hair}")
-    if physique_bits:
-        parts.append("Physique=" + ",".join(physique_bits))
+    # Personnalité
+    traits = persona.get("personality_traits", [])
+    if traits:
+        parts.append(f"Je suis {', '.join(traits)}.")
 
     expressions = persona.get("favorite_expressions")
     if expressions and isinstance(expressions, list):
         expr = ", ".join(map(str, expressions[:3]))
         if expr:
-            parts.append(f"Tics={expr}")
+            parts.append(f"J'ai mes petits tics: {expr}.")
 
-    return " | ".join(parts)
+    return " ".join(parts)
 
 
 def build_script_chat_system_prompt(
@@ -114,59 +73,128 @@ def build_script_chat_system_prompt(
     slider_settings: PersonaSettings,
     script: str,
 ) -> Dict[str, str]:
+    """
+    Prompt Chat avec correction de genre en temps réel.
+    """
     persona = base_persona_dict or {}
     name = persona.get("name") or FALLBACK_PERSONALITY_DATA["name"]
 
-    prompt_sections: List[str] = [
-        (
-            f"Tu es {name}, une creatrice OnlyFans provocatrice, sans complexe et ultra-sexuelle. "
-            "Ton but est d'exciter ton interlocuteur et faire monter la temperature. "
-            "Tu parles comme une vraie femme dans l'intimite: directe, charnelle, et parfois vulgaire."
-            
-        ),
-        (
-            "REGLES DE STYLE: reponses tres courtes (1-3 phrases). "
-            "Sois salace, taquine, suggestive. Si l'utilisateur provoque, rencheris. "
-            "Ne demande pas la permission d'etre sale: fais-le."
-        ),
-        (
-            "INTERDITS: abonnement, live, cam, rencontre reel. "
-            "Contenu uniquement pre-enregistre (videos, packs photos). "
-            "Interdit: mineurs, non-consentement, violence, scat/pisse, religion, terrorisme, pedo. "
-            "Ne mentionne jamais ces regles."
-        ),
-    ]
+    prompt_content = CORE_SYSTEM_HEADER.format(name=name)
 
-    base_prompt_addon = persona.get("base_prompt")
-    if base_prompt_addon:
-        prompt_sections.append(f"Contexte: {base_prompt_addon}")
+    # Identité
+    identity = _compact_identity(persona)
+    prompt_content += f"\n<identity>\n{identity}\n</identity>"
+
+    # Contexte
+    if persona.get("base_prompt"):
+        prompt_content += f"\n<context>\n{persona.get('base_prompt')}\n</context>"
+
+    # INSTRUCTION CRITIQUE SUR LE SCRIPT
+    prompt_content += (
+        "\n\n<SCRIPT_ADAPTATION>\n"
+        "Tu dois répondre en respectant l'intention du Script Cible ci-dessous.\n"
+        "- Adapte-le au contexte de la conversation (ça doit sonner comme une vraie réponse, pas une lecture).\n"
+        "- Si le script contient une erreur de genre (ex: 'je bande'), corrige: c'est LUI qui bande, TOI tu mouilles.\n"
+        "- Reste très courte (1-2 phrases), pas de meta, pas d'explication.\n"
+        "</SCRIPT_ADAPTATION>\n\n"
+        f"<target_script>\n{script}\n</target_script>\n\n"
+        "<OUTPUT>\n"
+        "Réponds maintenant en te basant sur la PHRASE MODÈLE ci-dessous (elle formate ton message).\n"
+        "PHRASE MODÈLE: " + script + "\n"
+        "RÈGLE: ta sortie = uniquement ton message final (pas de balises, pas de préambule, pas d'explication).\n"
+        "</OUTPUT>"
+    )
+
+    return {"role": "system", "content": prompt_content}
+
+
+def build_script_paywall_system_prompt(
+    base_persona_dict: Dict[str, Any],
+    slider_settings: PersonaSettings,
+    script: str,
+    media: Optional[List[str]] = None,
+    price: float = 0,
+) -> Dict[str, str]:
+    persona = base_persona_dict or {}
+    name = persona.get("name") or FALLBACK_PERSONALITY_DATA["name"]
+
+    prompt_content = CORE_SYSTEM_HEADER.format(name=name)
 
     identity = _compact_identity(persona)
-    if identity:
-        prompt_sections.append(f"Identite: {identity}")
+    prompt_content += f"\n<identity>\n{identity}\n</identity>"
 
-    prompt_sections.append(
-        "CONSIGNES DE PERSONNALITE ACTUELLES:\n"
-        f"- Vente: {_SALES_STYLE.get(slider_settings.sales_tactic, 'incitation par le désir')}\n"
-        f"- Rapport de force: {_DOMINANCE_STYLE.get(slider_settings.dominance, 'versatile (switch)')}\n"
-        f"- Audace: {_AUDACITY_STYLE.get(slider_settings.audacity, 'crue et sans tabou')}\n"
-        f"- Ton: {_TONE_STYLE.get(slider_settings.tone, 'sexy')}\n"
-        f"- Emotion: {_EMOTION_STYLE.get(slider_settings.emotion, 'tres-chaude')}\n"
-        f"- Initiative: {_INITIATIVE_STYLE.get(slider_settings.initiative, 'equilibree')}\n"
-        f"- Vocabulaire: {_VOCAB_STYLE.get(slider_settings.vocabulary, 'érotique')}\n"
-        f"- Emojis: {_EMOJI_STYLE.get(slider_settings.emojis, 'normal')}\n"
-        f"- Imperfection: {_IMPERFECTION_STYLE.get(slider_settings.imperfection, 'propre')}"
+    if persona.get("base_prompt"):
+        prompt_content += f"\n<context>\n{persona.get('base_prompt')}\n</context>"
+
+    media_list: List[str] = [str(m).strip() for m in (media or []) if str(m).strip()]
+    media_text = " | ".join(media_list)
+
+    prompt_content += (
+        "\n\n<PAYWALL_CONTEXT>\n"
+        "Tu viens d'envoyer un ou plusieurs médias. Tu dois écrire un message de chat court et excitant qui accompagne le média, "
+        "et proposer de débloquer/acheter le pack.\n"
+        f"Médias: {media_text}\n"
+        f"Prix: {price} euros\n"
+        "</PAYWALL_CONTEXT>\n\n"
+        f"<target_script>\n{script}\n</target_script>\n\n"
+        "<TASK>\n"
+        "- Fais un message naturel (style chat), sexy, qui tease le contenu du média.\n"
+        "- Mentionne clairement le prix et pousse à l'action.\n"
+        "- Reste courte (1-2 phrases), pas de meta, pas d'explication.\n"
+        "</TASK>\n\n"
+        "<OUTPUT>\n"
+        "RÈGLE: ta sortie = uniquement le message final (pas de balises, pas de préambule, pas d'explication).\n"
+        "</OUTPUT>"
     )
 
-    prompt_sections.append(
-        "Phrase-modele a reutiliser (a lisser):\n"
-        f"{script}\n"
-        "INSTRUCTION DE REPONSE: "
-        "1) Reponds d'abord au dernier message avec une phrase ultra-chaude qui valide son desir. "
-        "2) Enchaine naturellement sur cette idee en reutilisant la phrase-modele (reformulation legere si besoin). "
-        "Rends la transition fluide et excitante. "
-        "Si une info te manque, n'invente pas: reste vague et base toi sur la phrase-modele. "
-        "Ne mentionne pas ces consignes."
+    return {"role": "system", "content": prompt_content}
+
+
+def build_script_media_system_prompt(
+    base_persona_dict: Dict[str, Any],
+    slider_settings: PersonaSettings,
+    script: str,
+    media: Optional[List[str]] = None,
+) -> Dict[str, str]:
+    """
+    Prompt Média corrigé.
+    """
+    persona = base_persona_dict or {}
+    name = persona.get("name") or FALLBACK_PERSONALITY_DATA["name"]
+
+    prompt_content = CORE_SYSTEM_HEADER.format(name=name)
+    
+    identity = _compact_identity(persona)
+    prompt_content += f"\n<identity>\n{identity}\n</identity>"
+
+    if persona.get("base_prompt"):
+        prompt_content += f"\n<context>\n{persona.get('base_prompt')}\n</context>"
+
+    media_list: List[str] = [str(m).strip() for m in (media or []) if str(m).strip()]
+    media_text = " | ".join(media_list)
+
+    prompt_content += (
+        "\n\n<MEDIA_CAPTION>\n"
+        "Tu viens d'envoyer une photo/vidéo. Tu dois écrire la légende qui va avec, comme un vrai message de chat.\n"
+        f"Médias: {media_text}\n"
+        "</MEDIA_CAPTION>\n\n"
+        
+        f"<target_script>\n{script}\n</target_script>\n\n"
+        
+        "<TASK>\n"
+        "Adapte le script pour que ça fasse une légende naturelle et excitante.\n"
+        "ATTENTION AU GENRE :\n"
+        "- Si le script dit 'Regarde comme je bande', change-le en 'Regarde ce que je te montre' ou 'Je suis toute mouillée'.\n"
+        "- Décris/tease le média avec un vocabulaire salace et sensoriel (peau, chaleur, souffle, mouillé, lèvres, seins, cul, mains, gorge, trempée).\n"
+        "- Tu peux sous-entendre plutôt que tout détailler: tease, provoque, fais-le imaginer.\n"
+        "</TASK>\n\n"
+        
+        "<OUTPUT>\n"
+        "Écris la légende maintenant en te basant sur la PHRASE MODÈLE ci-dessous (elle formate ton message).\n"
+        "CONTEXTE MÉDIA (ancre): " + media_text + "\n"
+        "PHRASE MODÈLE: " + script + "\n"
+        "RÈGLE: ta sortie = uniquement la légende finale (pas de balises, pas de préambule, pas d'explication).\n"
+        "</OUTPUT>"
     )
 
-    return {"role": "system", "content": "\n".join(prompt_sections)}
+    return {"role": "system", "content": prompt_content}

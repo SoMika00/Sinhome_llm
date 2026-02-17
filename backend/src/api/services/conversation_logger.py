@@ -141,8 +141,12 @@ def _format_log_entry(
         log_parts.append("")
         log_parts.append("--- INFOS SUPPLEMENTAIRES ---")
         for key, value in extra_info.items():
-            log_parts.append(f"{key}: {value}")
-    
+            if isinstance(value, str) and "\n" in value:
+                log_parts.append(f"{key}:")
+                log_parts.append(value)
+            else:
+                log_parts.append(f"{key}: {value}")
+
     log_parts.append("")
     log_parts.append(separator)
     log_parts.append("")

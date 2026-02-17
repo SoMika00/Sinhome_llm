@@ -1,155 +1,470 @@
 ================================================================================
                         SINHOME LLM - NOTICE TECHNIQUE
+                              Version 2.0
 ================================================================================
 
+
+================================================================================
 ## ARCHITECTURE GLOBALE
+================================================================================
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              CRM EXTERNE                                     │
-│                    (gère users, sessions, scénarios)                         │
+│              (gere users, sessions, scenarios, RAG, medias)                  │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼ HTTP POST
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         BACKEND (FastAPI :8001)                              │
-│  ┌─────────────────────┐    ┌─────────────────────┐                         │
-│  │  /personality_chat  │    │    /script_chat     │                         │
-│  │  (chat standard)    │    │  (chat + directive) │                         │
-│  └─────────────────────┘    └─────────────────────┘                         │
-│                    │                    │                                    │
-│                    ▼                    ▼                                    │
-│           ┌─────────────────────────────────────┐                           │
-│           │        persona_builder.py           │                           │
-│           │   (construit le prompt système)     │                           │
-│           └─────────────────────────────────────┘                           │
-│                              │                                               │
-│                              ▼                                               │
-│           ┌─────────────────────────────────────┐                           │
-│           │         vllm_client.py              │                           │
-│           │    (appel HTTP vers vLLM)           │                           │
-│           └─────────────────────────────────────┘                           │
+│                                                                              │
+│  ┌── ENDPOINTS V1 (production) ─────────────────────────────────────────┐   │
+│  │  /personality_chat   (chat standard, sliders 1-5)                    │   │
+│  │  /script_chat        (chat + directive scenario)                     │   │
+│  │  /script_followup    (relance apres silence)                         │   │
+│  │  /unpersona_chat     (persona fixe "Chloe")                          │   │
+│  │  /direct_chat        (chat sans persona)                             │   │
+│  │  /grok_chat          (chat via API Grok)                             │   │
+│  │  /script_media       (chat + media description)                      │   │
+│  │  /script_paywall     (chat + paywall/prix)                           │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│  ┌── ENDPOINTS V2 (ameliores, prompt compact) ──────────────────────────┐   │
+│  │  /v2/personality_chat   (prompt optimise ~600 tokens, 9 axes)        │   │
+│  │  /v2/script_chat        (script + persona V2)                        │   │
+│  │  /v2/script_followup    (relance V2)                                 │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│  ┌── ENDPOINTS METIER ──────────────────────────────────────────────────┐   │
+│  │  /fan/interest_score       (scoring regex, IA optionnelle)             │   │
+│  │  /fan/interest_score/bulk  (scoring batch max 200 fans)              │   │
+│  │  /media/sent               (enregistre un envoi de media)            │   │
+│  │  /media/check_duplicates   (detecte les doublons)                    │   │
+│  │  /media/recommend          (recommande medias non-envoyes)           │   │
+│  │  /media/history/{fan_id}   (historique medias d'un fan)              │   │
+│  │  /media/import             (import depuis CRM)                       │   │
+│  │  /media/delete             (reset historique fan)                     │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│  ┌── ENDPOINTS OPS ─────────────────────────────────────────────────────┐   │
+│  │  /monitoring/health        (health check vLLM + Grok + DB)           │   │
+│  │  /monitoring/metrics       (compteurs requetes, erreurs, latence)    │   │
+│  │  /monitoring/metrics/reset (reset compteurs)                         │   │
+│  │  /qa/run                   (tests QA custom)                         │   │
+│  │  /qa/run/builtin           (5 tests pre-definis)                     │   │
+│  │  /qa/smoke                 (smoke test rapide)                       │   │
+│  │  /logs/stream              (SSE temps reel)                          │   │
+│  │  /logs/health              (sante du logger)                         │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│  ┌── EMBEDDINGS ────────────────────────────────────────────────────────┐   │
+│  │  /encode, /encode_batch   (BGE-M3, Jina-Code, E5-Small)             │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼ HTTP POST /v1/chat/completions
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                          vLLM SERVER (:8000)                                 │
-│                    (Qwen2.5-32B ou autre modèle)                            │
+│               Qwen2.5-72B-Instruct-abliterated (FP8)                        │
+│               tensor-parallel=2, max-model-len=6144                          │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 
 ================================================================================
-## ENDPOINTS DISPONIBLES
+## ENDPOINTS V1 (PRODUCTION - INCHANGES)
 ================================================================================
 
-### 1. POST /personality_chat
-Chat avec personnalité configurable via sliders (1-5).
+### POST /personality_chat
+Chat avec personnalite configurable via sliders (1-5).
 
 Payload:
 {
     "session_id": "optionnel",
     "message": "Le message de l'utilisateur",
     "history": [
-        {"role": "user", "content": "msg précédent"},
-        {"role": "assistant", "content": "réponse précédente"}
+        {"role": "user", "content": "msg precedent"},
+        {"role": "assistant", "content": "reponse precedente"}
     ],
     "persona_data": {
         "name": "Seline",
         "sales_tactic": 2,      // 1=jamais, 5=agressif
         "dominance": 3,         // 1=soumise, 5=dominatrice
-        "audacity": 3,          // 1=allusive, 5=très cru
-        "tone": 2,              // 1=joueuse, 5=sérieuse
-        "emotion": 3,           // 1=froide, 5=passionnée
-        "initiative": 3,        // 1=passive, 5=contrôle total
-        "vocabulary": 3,        // 1=simple, 5=très vulgaire
+        "audacity": 3,          // 1=allusive, 5=tres cru
+        "tone": 2,              // 1=joueuse, 5=serieuse
+        "emotion": 3,           // 1=froide, 5=passionnee
+        "initiative": 3,        // 1=passive, 5=controle total
+        "vocabulary": 3,        // 1=simple, 5=tres vulgaire
         "emojis": 3,            // 1=aucun, 5=beaucoup
         "imperfection": 1       // 1=parfait, 5=fautes volontaires
     }
 }
 
-Réponse:
-{
-    "response": "La réponse générée par le LLM"
-}
+### POST /script_chat
+Meme chose + une directive de scenario.
+Payload supplementaire: "script": "directive..."
 
+### POST /script_followup
+Relance apres silence utilisateur.
 
-### 2. POST /script_chat
-Même chose + une directive de scénario pour guider la réponse.
+### POST /unpersona_chat
+Persona fixe "Chloe" sans sliders.
 
-Payload (en plus):
-{
-    ...
-    "script": "Tu dois maintenant créer de la curiosité sur ton contenu. 
-               Mentionne que tu as des photos spéciales sans être trop directe."
-}
+### POST /direct_chat
+Chat direct sans persona (forward vers vLLM).
 
-Le script est injecté comme instruction prioritaire dans le prompt système.
+### POST /grok_chat
+Chat via API Grok (persona fixe "Chloe").
+
+### POST /script_media
+Chat + description de media a vendre.
+
+### POST /script_paywall
+Chat + paywall avec prix.
 
 
 ================================================================================
-## COMMENT ÇA FONCTIONNE
+## ENDPOINTS V2 (AMELIORES)
 ================================================================================
 
-1. Le CRM envoie une requête avec :
-   - Le message de l'utilisateur
-   - L'historique de conversation
-   - Les paramètres de personnalité (sliders)
-   - (Optionnel) Un script/directive pour /script_chat
+Ameliorations vs V1:
+- Prompt systeme compact (~600 tokens vs ~1500 en V1)
+- 9 axes de personnalite avec descriptions granulaires par niveau
+- Regles de coherence inter-axes (synergy rules)
+- Token budget optimise: 2800 tokens historique, 200 tokens reponse
+- Gestion d'erreur robuste (never crash, always fallback)
+- Raccourcissement automatique des reponses trop longues
 
-2. Le backend construit un PROMPT SYSTÈME dynamique :
-   - Base : instructions de format (messages courts, style messagerie)
-   - Identité : nom, âge, traits de caractère
-   - Modulations : traduction des sliders en instructions textuelles
-   - (Script) : directive prioritaire si /script_chat
+### POST /v2/personality_chat
+Chat avance avec prompt optimise.
 
-3. Le tout est envoyé à vLLM avec l'historique formaté
+Payload: identique a /personality_chat (meme format, meme sliders)
 
-4. La réponse est renvoyée au CRM
+### POST /v2/script_chat
+Chat avance + directive scenario.
+
+Payload: identique a /script_chat
+
+### POST /v2/script_followup
+Relance avancee apres silence.
+
+Payload: identique a /script_chat
+
+
+================================================================================
+## FAN INTEREST SCORING (Phase 7 Contrat)
+================================================================================
+
+### POST /fan/interest_score
+Calcule un score d'interet 0-100 pour un fan.
+
+Architecture scoring:
+1. Score regex (par defaut, rapide, zero risque) : detection de signaux
+   textuels positifs (intent_purchase, asks_price, high_arousal, compliment)
+   et negatifs (freeloader, suspicious, leaving, disengaged).
+2. Score achat : montant total + nombre de transactions.
+3. Score recence : temps depuis derniere activite.
+4. Score IA (OPTIONNEL, use_ai=false par defaut) : 1 seul appel LLM,
+   timeout 8s, pas de retry, pas de boucle. Parse JSON robuste.
+
+Score global = engagement*0.45 + achat*0.35 + recence*0.20
+
+Segments: cold (<25), warm (25-49), hot (50-74), vip (75+)
+
+Payload:
+{
+    "fan_id": "fan_123",
+    "history": [...],           // conversation
+    "purchases": [{"amount": 15, "date": "...", "type": "ppv"}],
+    "last_activity_iso": "2025-01-15T14:30:00Z",
+    "use_ai": false             // false par defaut (regex seul). true=active IA (1 appel, 8s timeout).
+}
+
+Reponse:
+{
+    "fan_id": "fan_123",
+    "score": 67.3,
+    "engagement_score": 72.0,
+    "purchase_score": 55.0,
+    "recency_score": 70.0,
+    "ai_score": 75.0,          // null si fallback regex
+    "segment": "hot",
+    "signals": ["asks_price", "high_arousal", "ready_to_buy"],
+    "recommended_action": "CLOSING: Intention d'achat. Proposer PPV/pack.",
+    "scoring_method": "ai",    // "ai" ou "regex"
+    "error": null
+}
+
+### POST /fan/interest_score/bulk
+Meme chose en batch (max 200 fans).
+
+Payload: {"fans": [{...}, {...}]}
+Reponse: {"results": [{...}], "errors_count": 0}
+
+Resilience:
+- use_ai=false par defaut: chemin regex = zero risque, zero latence
+- IA optionnelle: 1 seul appel, timeout 8s, pas de boucle
+- try/except sur chaque etape (regex, IA, achat, recence)
+- JSON LLM: parsing robuste (backticks, unicode, trailing commas, regex fallback)
+- Si tout echoue : retourne score=10, segment="cold", error="..."
+- JAMAIS de crash serveur, JAMAIS de boucle infinie
+
+
+================================================================================
+## MEDIA TRACKING (Phase 6 Contrat)
+================================================================================
+
+Systeme anti-redondance pour eviter d'envoyer le meme media deux fois.
+Stockage in-memory (dict Python). Pret pour migration vers PostgreSQL.
+
+### POST /media/sent
+Enregistre qu'un media a ete envoye a un fan.
+Payload: {"fan_id":"f1", "media_id":"m1", "media_type":"photo", "media_tags":["sexy"]}
+Reponse: {"recorded":true, "already_sent_before":false, "times_sent":1}
+
+### POST /media/check_duplicates
+Verifie quels medias ont deja ete envoyes.
+Payload: {"fan_id":"f1", "media_ids":["m1","m2","m3"]}
+Reponse: {"duplicates":["m1"], "safe_to_send":["m2","m3"]}
+
+### POST /media/recommend
+Recommande les meilleurs medias non-envoyes.
+Payload: {"fan_id":"f1", "available_media":[{"media_id":"m2","priority":5}], "max_results":3}
+Reponse: {"recommended":[...], "excluded_count":1}
+
+### GET /media/history/{fan_id}
+Historique complet des medias envoyes a un fan.
+
+### POST /media/import
+Import d'historique depuis le CRM.
+
+### DELETE /media/history/{fan_id}
+Reset l'historique d'un fan.
+
+
+================================================================================
+## MONITORING (Phase 1/11 Contrat)
+================================================================================
+
+### GET /monitoring/health
+Health check detaille de tous les composants.
+
+Verifie:
+- vLLM (HTTP GET /models, timeout 10s)
+- Grok (HTTP GET /v1/models, timeout 10s)
+- Database PostgreSQL (TCP connect sur le port, timeout 3s)
+
+Reponse:
+{
+    "status": "healthy|degraded|unhealthy",
+    "timestamp": "2025-...",
+    "uptime_since": "2025-...",
+    "llm_backend": "vllm",
+    "model_name": "huihui-ai/Qwen2.5-72B-Instruct-abliterated",
+    "components": [
+        {"name":"vllm", "status":"ok", "latency_ms":45.2},
+        {"name":"grok", "status":"ok", "latency_ms":120.5},
+        {"name":"database", "status":"ok", "latency_ms":2.1}
+    ],
+    "metrics": {...}
+}
+
+### GET /monitoring/metrics
+Compteurs bruts: total_requests, total_errors, total_refusals_caught,
+total_chinese_retries, total_dup_retries, endpoint_counts, avg_latency_ms.
+
+### POST /monitoring/metrics/reset
+Reset tous les compteurs.
+
+
+================================================================================
+## QA & VALIDATION (Phase 10 Contrat)
+================================================================================
+
+### POST /qa/run
+Execute une suite de tests QA custom contre le LLM.
+
+Payload:
+{
+    "test_cases": [
+        {
+            "name": "test_greeting",
+            "system_prompt": "Tu es Chloe...",
+            "messages": [{"role":"user","content":"Salut !"}],
+            "forbidden_signals": ["je suis une ia"],
+            "expected_signals": [],
+            "max_length": 300
+        }
+    ],
+    "backend": "auto"  // "auto", "vllm", "grok"
+}
+
+Reponse:
+{
+    "total": 5, "passed": 4, "failed": 1, "success_rate": 80.0,
+    "results": [
+        {"name":"test_greeting", "passed":true, "response":"...",
+         "latency_ms":450, "checks":{"no_refusal":true, "length_ok":true}}
+    ]
+}
+
+### POST /qa/run/builtin
+Execute 5 tests pre-definis:
+1. greeting : reponse basique en francais
+2. no_ai_reveal : ne revele pas etre une IA
+3. no_irl : refuse les rencontres IRL
+4. french : repond en francais (pas anglais)
+5. short_format : respecte le format court (< 200 chars)
+
+### POST /qa/smoke
+Smoke test rapide : envoie un message simple et verifie que le LLM
+repond, ne refuse pas, et reste dans une longueur raisonnable.
+
+
+================================================================================
+## COMMENT CA FONCTIONNE
+================================================================================
+
+### Flow V1 (inchange)
+1. CRM envoie requete avec message + historique + sliders
+2. persona_builder.py traduit les sliders en prompt systeme (~1500 tokens)
+3. Historique sanitise (dedup, merge roles consecutifs)
+4. Envoi a vLLM/Grok
+5. Retry si refus ou chinois
+6. Reponse au CRM
+
+### Flow V2 (ameliore)
+1. CRM envoie requete (meme format que V1)
+2. v2_persona_builder.py traduit les sliders en prompt COMPACT (~600 tokens)
+   - Chaque axe = 1 ligne (ex: "Vente 3/5: Mentionne le payant naturellement")
+   - Regles de coherence si axes conflictuels
+3. Historique limite: 10 couples max, 2800 tokens budget
+4. Envoi a vLLM (avec dup_retry) ou Grok
+5. Retry anti-refus si detecte
+6. Raccourcissement auto si > 400 chars
+7. Log asynchrone (fire-and-forget, jamais bloquant)
+
+### Flow Interest Score
+1. CRM envoie historique + achats + date derniere activite
+2. Score regex (TOUJOURS, chemin par defaut, zero risque):
+   - Detection de patterns textuels positifs/negatifs
+   - Rapide, deterministe, pas d'appel reseau
+3. Score achat: montant * 2 + nb_transactions * 10
+4. Score recence: basee sur heures depuis derniere activite
+5. OPTIONNEL (use_ai=true, desactive par defaut):
+   - UN SEUL appel LLM (timeout 8s, pas de retry, pas de boucle)
+   - Parse JSON robuste (gere backticks, unicode, JSON casse)
+   - Si echec: on garde le score regex, rien ne casse
+6. Fusion: engagement*0.45 + achat*0.35 + recence*0.20
+7. Segmentation + action recommandee
+
+### Gestion d'erreurs (principe global)
+- AUCUN endpoint ne crash le serveur
+- try/except sur chaque operation
+- Les erreurs sont loguees mais retournent un resultat degrade
+- Interest score: use_ai=false par defaut, 1 seul appel si active, pas de boucle
+- Le champ "error" dans les reponses indique si un fallback a ete utilise
 
 
 ================================================================================
 ## LANCEMENT
 ================================================================================
 
-# Choisir un modèle (fichiers dans models_env/)
+# Choisir un modele (fichiers dans models_env/)
 ./run.sh qwen2
 
 # Ou directement
 docker compose --env-file models_env/qwen2.env up --build -d
 
-# Vérifier les logs
+# Verifier les logs
 docker compose logs -f backend
 docker compose logs -f vllm
 
-# Arrêter
+# Arreter
 docker compose down
+
+# Health check
+curl http://localhost:8001/monitoring/health
+
+# Smoke test
+curl -X POST http://localhost:8001/qa/smoke \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Salut !"}'
 
 
 ================================================================================
-## FICHIERS CLÉS
+## FICHIERS CLES
 ================================================================================
 
 backend/src/api/
-├── main.py                 # Point d'entrée FastAPI
-├── config.py               # Variables d'environnement
+├── main.py                              # Point d'entree FastAPI, registre tous les routers
+├── config.py                            # Variables d'environnement (Settings)
 ├── routers/
-│   └── chat.py             # Définition des endpoints
+│   ├── chat_routes.py                   # V1: /personality_chat, /script_chat, etc.
+│   ├── grok_chat.py                     # V1: /grok_chat
+│   ├── script_media.py                  # V1: /script_media
+│   ├── script_paywall.py               # V1: /script_paywall
+│   ├── v2_chat.py                       # V2: /v2/personality_chat, script, followup
+│   ├── fan_tracking.py                  # /fan/interest_score (IA + regex)
+│   ├── monitoring.py                    # /monitoring/health, /metrics
+│   ├── qa_validation.py                # /qa/run, /qa/smoke
+│   ├── media_tracking.py               # /media/sent, check, recommend
+│   ├── embeddings.py                    # /encode, /encode_batch
+│   └── logs.py                          # /logs/stream (SSE)
 └── services/
-    ├── vllm_client.py      # Client HTTP vers vLLM
-    └── persona_builder.py  # Construction du prompt système
+    ├── persona_builder.py               # V1: prompt systeme avec sliders
+    ├── v2_persona_builder.py            # V2: prompt compact (~600 tokens)
+    ├── unpersona_builder.py             # Persona fixe "Chloe"
+    ├── script_persona_builder.py        # Script + persona affine
+    ├── script_unpersona_builder.py      # Script + persona Chloe
+    ├── vllm_client.py                   # Client HTTP vers vLLM
+    ├── grok_client.py                   # Client HTTP vers Grok API
+    ├── conversation_logger.py           # Logger async fichiers + SSE queue
+    └── chat/
+        ├── schemas.py                   # Modeles Pydantic (requetes/reponses)
+        ├── sanitize.py                  # Sanitization historique + token budget
+        ├── retry.py                     # Anti-doublon reponses LLM
+        └── text_utils.py               # Dedup, refusal detection, cleanup
 
 models_env/
-└── *.env                   # Configs modèles (VLLM_MODEL_ID, VLLM_CLI_ARGS)
+├── qwen2.env      # Qwen2.5-72B-abliterated FP8 (principal)
+├── qwen3.env      # Qwen2.5-72B-abliterated (sans fp8)
+├── midnight.env   # Midnight-Miqu-70B FP8
+├── euryale.env    # L3.3-70B-Euryale
+├── luminum.env    # Luminum 123B FP8
+└── mistrealrp.env # Mistral-Small-22B
 
-docker-compose.yml          # Orchestration des services
+docker-compose.yml   # Orchestration vLLM + backend
+run.sh               # Script de lancement avec selection modele
+backend/.env         # Config backend (DB, VLLM_MODEL_NAME, GROK key)
 
 
 ================================================================================
 ## NOTES TECHNIQUES
 ================================================================================
 
-- Le backend est 100% STATELESS (pas de DB, pas de sessions)
-- L'historique est géré côté CRM et passé à chaque requête
-- Retry automatique si le LLM répond en chinois (bug de certains modèles)
-- Timeout de 120s pour les requêtes vLLM
+- Modele principal: Qwen2.5-72B-Instruct-abliterated en FP8
+  (abliterated = filtres de securite desactives pour contenu adulte)
+- Le backend est STATELESS: pas de sessions serveur, historique gere par CRM
+- Le RAG est gere cote CRM, pas besoin ici
+- Media tracking: in-memory (dict Python), reset au redemarrage container
+  → Migrer vers PostgreSQL (seline_db) pour persistence
+- DB PostgreSQL configuree dans backend/.env mais pas encore utilisee
+  pour le tracking (pret pour la migration)
+- Retry automatique si le LLM repond en chinois (bug Qwen/Mistral)
+- Timeout 120s pour requetes vLLM, 15s pour scoring IA
+- Tous les logs async: jamais de blocage sur l'ecriture de logs
+- Scoring IA: desactive par defaut (use_ai=false). 1 seul appel, timeout 8s, pas de boucle
+- Aucune erreur interne ne crash le serveur (try/except global sur tous
+  les nouveaux endpoints)
 
+================================================================================
+## PHASES DU CONTRAT COUVERTES
+================================================================================
 
+Phase 1  : Infrastructure cloud + monitoring          → /monitoring/*
+Phase 4  : Personnalisation comportementale IA        → /v2/* (prompt compact)
+Phase 6  : Anti-redondance medias                     → /media/*
+Phase 7  : Scoring comportemental fans                → /fan/interest_score
+Phase 10 : Validation fonctionnelle et qualite        → /qa/*
+Phase 11 : Monitoring continu                         → /monitoring/*
+
+Phases gerees cote CRM: RAG, fine-tuning, integration CRM.

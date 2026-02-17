@@ -4,13 +4,12 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Env
-.env
+# Env (tous les .env dans tous les dossiers)
+**/.env
 
 # Docker
 *.log
 .qdrant_storage/
-.env
 code_synthesis.txt
 
 logs/

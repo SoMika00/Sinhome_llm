@@ -1,27 +1,44 @@
 #!/usr/bin/env bash
 # Script pour lancer l'environnement avec un modèle spécifique.
-# Usage: ./run.sh production-qwen2.5-32b
+# Usage: ./run.sh eva
 
 set -euo pipefail
 
 if [ $# -lt 1 ]; then
-  echo "Erreur : Veuillez spécifier le nom du modèle (ex: production-qwen2.5-32b)."
+  echo "Erreur : Veuillez spécifier le nom du modèle (ex: qwen2, midnight, eva-qwen2.5-72b)."
+  echo "Modeles disponibles:"
+  ls -1 models_env/*.env 2>/dev/null | sed 's#^models_env/##; s#\.env$##' || true
   exit 1
 fi
 
 MODEL_NAME="$1"
+LLM_BACKEND="vllm"
+
+if [ "$MODEL_NAME" = "grok" ]; then
+  LLM_BACKEND="grok"
+  MODEL_NAME="euryale"
+fi
+
 case "$MODEL_NAME" in
   qwen2)
     MODEL_NAME="qwen2"
     ;;
+  qwen3)
+    MODEL_NAME="qwen3"
+    ;;
   midnight)
     MODEL_NAME="midnight"
+    ;;
+  eva|eva-qwen2.5-72b)
+    MODEL_NAME="eva-qwen2.5-72b"
     ;;
 esac
 ENV_FILE="models_env/${MODEL_NAME}.env"
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "Erreur : Le fichier '${ENV_FILE}' n'existe pas."
+  echo "Modeles disponibles:"
+  ls -1 models_env/*.env 2>/dev/null | sed 's#^models_env/##; s#\.env$##' || true
   exit 1
 fi
 
@@ -58,6 +75,8 @@ fi
 
 # Copie le fichier env pour docker compose
 cp "$ENV_FILE" "$DOTENV_FILE"
+
+echo "SINHOME_LLM_BACKEND=${LLM_BACKEND}" >> "$DOTENV_FILE"
 
 echo "[*] .env genere (contenu masque)"
 

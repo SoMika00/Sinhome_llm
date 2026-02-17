@@ -31,5 +31,6 @@ services:
     environment:
       VLLM_API_BASE_URL: "http://vllm:8000/v1"
       VLLM_MODEL_NAME: "${VLLM_MODEL_ID}"
+      SINHOME_LLM_BACKEND: "${SINHOME_LLM_BACKEND:-vllm}"
       SINHOME_LOGS_DIR: "/app/logs"
     restart: on-failure

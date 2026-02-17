@@ -1,5 +1,6 @@
 # Fichier : backend/src/api/services/vllm_client.py (MODIFIÉ)
 
+import asyncio
 import httpx
 import logging
 from typing import List, Dict, Optional, Union
@@ -29,6 +30,9 @@ async def get_vllm_response(
     messages: List[Dict[str, str]],
     temperature: float = 0.65,
     top_p: float = 0.9,
+    repetition_penalty: float = 1.15,
+    presence_penalty: float = 0.0,
+    frequency_penalty: float = 0.08,
     max_tokens: int = 1024,
     stop: Optional[Union[str, List[str]]] = None,
 ) -> str:
@@ -42,6 +46,9 @@ async def get_vllm_response(
         "messages": messages,
         "temperature": temperature,
         "top_p": top_p,
+        "repetition_penalty": repetition_penalty,
+        "presence_penalty": presence_penalty,
+        "frequency_penalty": frequency_penalty,
         "max_tokens": max_tokens,
         "stop": stop,
     }
@@ -72,11 +79,39 @@ async def get_vllm_response(
                     raise HTTPException(status_code=500, detail=f"Réponse invalide du modèle: {data}")
 
             except httpx.TimeoutException:
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(1.0 * (2**attempt))
+                    continue
                 raise HTTPException(status_code=504, detail="La requête au modèle a expiré.")
             except httpx.RequestError as e:
                 # Gère les erreurs de connexion, etc.
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(1.0 * (2**attempt))
+                    continue
                 raise HTTPException(status_code=503, detail=f"Erreur de communication avec le service vLLM : {e}")
     
     # Si la boucle se termine, toutes les tentatives ont échoué.
     logger.error(f"Nombre maximal de {MAX_RETRIES} tentatives atteint. La dernière réponse contenait encore du chinois.")
     return last_response_text # On renvoie la dernière réponse, même si elle est en chinois.
+
+
+async def get_vllm_completion(
+    prompt: str,
+    temperature: float = 0.65,
+    top_p: float = 0.9,
+    repetition_penalty: float = 1.15,
+    presence_penalty: float = 0.0,
+    frequency_penalty: float = 0.08,
+    max_tokens: int = 1024,
+    stop: Optional[Union[str, List[str]]] = None,
+) -> str:
+    return await get_vllm_response(
+        [{"role": "user", "content": prompt}],
+        temperature=temperature,
+        top_p=top_p,
+        repetition_penalty=repetition_penalty,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+        max_tokens=max_tokens,
+        stop=stop,
+    )
